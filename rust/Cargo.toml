@@ -3,6 +3,9 @@ name = "claude-fingerprint"
 version = "1.0.0"
 edition = "2021"
 description = "Claude 指纹切换器 - 一键切换系统时区 / 区域语言 / 浏览器语言"
+license = "MIT"
+repository = "https://github.com/Tsuki-hash/claude-timezone-guard"
+readme = "README.md"
 
 [dependencies]
 egui = "0.31"
@@ -11,6 +14,10 @@ winreg = "0.52"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"
+# 打开参考检测页。刻意不用 `cmd /C start`：裸名 cmd 会被 CreateProcess 的
+# 搜索顺序（应用目录→当前目录→System32→PATH）劫持，而 cmd 还会二次解析
+# 参数字符串。webbrowser 走 ShellExecuteW，已在依赖树里（egui-winit 引入）。
+webbrowser = "1"
 
 [profile.release]
 opt-level = "z"

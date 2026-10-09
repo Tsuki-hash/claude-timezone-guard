@@ -59,18 +59,18 @@ fn save_theme_pref(t: Theme) {
 /// 设计令牌：所有颜色集中在这里，两个主题共用同一套语义
 #[derive(Clone, Copy)]
 pub struct Palette {
-    pub bg: egui::Color32,        // 页面底
-    pub panel: egui::Color32,     // 卡片
-    pub well: egui::Color32,      // 凹陷区（日志/读数）
-    pub line: egui::Color32,      // 分隔线 / 边框
-    pub fg: egui::Color32,        // 主文字
-    pub fg_dim: egui::Color32,    // 次文字
-    pub fg_mute: egui::Color32,   // 弱文字（标签）
-    pub sig_sg: egui::Color32,    // 信号色 A —— 新加坡（安全/零差异）
-    pub sig_us: egui::Color32,    // 信号色 B —— 加州（琥珀）
-    pub warn: egui::Color32,      // 中危
-    pub danger: egui::Color32,    // 高危
-    pub ok: egui::Color32,        // 安全
+    pub bg: egui::Color32,      // 页面底
+    pub panel: egui::Color32,   // 卡片
+    pub well: egui::Color32,    // 凹陷区（日志/读数）
+    pub line: egui::Color32,    // 分隔线 / 边框
+    pub fg: egui::Color32,      // 主文字
+    pub fg_dim: egui::Color32,  // 次文字
+    pub fg_mute: egui::Color32, // 弱文字（标签）
+    pub sig_sg: egui::Color32,  // 信号色 A —— 新加坡（安全/零差异）
+    pub sig_us: egui::Color32,  // 信号色 B —— 加州（琥珀）
+    pub warn: egui::Color32,    // 中危
+    pub danger: egui::Color32,  // 高危
+    pub ok: egui::Color32,      // 安全
 }
 
 impl Palette {
@@ -126,6 +126,9 @@ impl Palette {
 // ============================================================
 // 应用状态
 // ============================================================
+/// 参考检测页地址（硬编码常量，不可配置 —— 避免任何拼接/注入面）
+pub const DETECT_PAGE_URL: &str = "https://ip.net.coffee/claude/";
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum LogKind {
     Info,
@@ -136,12 +139,15 @@ pub enum LogKind {
 
 pub struct App {
     pub theme: Theme,
+    /// 已经写进 egui 全局样式的主题。None = 还没应用过。
+    /// 用来把 apply_theme 从"每帧"降为"仅主题变化时"。
+    applied_theme: Option<Theme>,
     pub fp: Fingerprint,
     pub log: Vec<(String, LogKind)>,
     pub busy: bool,
     pub has_backup: bool,
-    tx: Sender<TaskResult>,
-    rx: Receiver<TaskResult>,
+    /// 当前在跑的任务的接收端。**不长期持有 Sender** —— 见 poll_tasks 的说明。
+    task_rx: Option<Receiver<TaskResult>>,
 }
 
 pub enum TaskResult {
@@ -150,21 +156,23 @@ pub enum TaskResult {
 
 impl App {
     pub fn new() -> Self {
-        let (tx, rx) = channel();
         let fp = read_fingerprint();
         // 默认浅色（技术文档纸），深色用右上角按钮切换
         let theme = load_theme_pref().unwrap_or(Theme::Light);
         let mut app = Self {
             theme,
+            applied_theme: None,
             log: vec![(format!("就绪 · 当前时区 {}", fp.tz_id), LogKind::Info)],
             busy: false,
             has_backup: load_backup().is_ok(),
-            tx,
-            rx,
+            task_rx: None,
             fp,
         };
         if !app.has_backup {
-            app.push_log("当前没有备份，切换后「一键恢复」才会启用".into(), LogKind::Info);
+            app.push_log(
+                "当前没有备份，切换后「一键恢复」才会启用".into(),
+                LogKind::Info,
+            );
         } else {
             app.push_log("检测到已有备份，一键恢复可用".into(), LogKind::Info);
         }
@@ -175,17 +183,51 @@ impl App {
         self.log.push((msg, kind));
     }
 
+    /// 开一个后台任务，并把接收端存起来。
+    ///
+    /// 关键设计：**每次任务新建一个 channel，App 只保存 Receiver，不保存 Sender**。
+    /// 早先 App 长期持有 `tx`，而 mpsc 只有在「所有 Sender 都被丢弃」时才返回
+    /// `Disconnected` —— 于是工作线程 panic、它的 tx 被丢弃之后，App 那份 tx 还活着，
+    /// `try_recv()` 只会一直返回 `Empty`，`busy` 永远停在 true，界面彻底卡死。
+    /// 不持有 Sender 后，worker 一死（含 panic）channel 立刻断开，poll_tasks
+    /// 就能收到 `Disconnected` 复位状态。
+    fn spawn_task<F>(&mut self, work: F)
+    where
+        F: FnOnce(Sender<TaskResult>) + Send + 'static,
+    {
+        let (tx, rx) = channel();
+        self.task_rx = Some(rx);
+        thread::spawn(move || work(tx));
+    }
+
     fn poll_tasks(&mut self) {
-        while let Ok(res) = self.rx.try_recv() {
-            match res {
-                TaskResult::Done { lines } => {
-                    for (m, k) in lines {
-                        self.push_log(m, k);
-                    }
-                    self.busy = false;
-                    self.fp = read_fingerprint();
-                    self.has_backup = load_backup().is_ok();
+        let Some(rx) = self.task_rx.as_ref() else {
+            return;
+        };
+        // 每个分支都直接 return，所以这里不是循环：
+        // 一次只可能有一个任务，而 Done/Disconnected 都代表它已经结束。
+        match rx.try_recv() {
+            Ok(TaskResult::Done { lines }) => {
+                for (m, k) in lines {
+                    self.push_log(m, k);
                 }
+                self.busy = false;
+                self.task_rx = None;
+                self.fp = read_fingerprint();
+                self.has_backup = load_backup().is_ok();
+            }
+            // Empty = 还没结果，下一帧再看
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            // Disconnected = 工作线程已退出却没发结果，即它 panic 了。
+            // 必须复位 busy，否则所有按钮从此失效、界面看似卡死。
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.busy = false;
+                self.task_rx = None;
+                self.push_log(
+                    "内部错误：后台任务异常退出，本次操作可能未完成。请重新操作，若反复出现请反馈。"
+                        .into(),
+                    LogKind::Bad,
+                );
             }
         }
     }
@@ -196,14 +238,16 @@ impl App {
         }
         self.busy = true;
         self.push_log(format!("── 切换到 {} ──", info(p).label), LogKind::Info);
-        let tx = self.tx.clone();
         let inf = info(p);
         let tz = inf.tz.to_string();
         let culture = inf.culture.to_string();
         let bl = inf.browser_lang.to_string();
 
-        thread::spawn(move || {
+        self.spawn_task(move |tx| {
             let mut out: Vec<(String, LogKind)> = Vec::new();
+            // 必须在备份之前声明：备份失败也是失败，早期版本把它声明在备份之后，
+            // 导致备份没成功却依然报"完成"，用户以为有还原点。
+            let mut failures = 0usize;
 
             // 浏览器必须先完全退出才能改 Preferences：运行中的 Chromium 会在
             // 退出时用内存里的配置覆盖磁盘，把我们的改动静默回滚掉。
@@ -214,7 +258,14 @@ impl App {
             match save_backup() {
                 Ok(Some(m)) => out.push((m, LogKind::Ok)),
                 Ok(None) => {}
-                Err(e) => out.push((format!("备份失败: {}", e), LogKind::Warn)),
+                Err(e) => {
+                    out.push((format!("备份失败: {}", e), LogKind::Bad));
+                    out.push((
+                        "没有备份就无法一键还原，建议先解决备份问题再切换".into(),
+                        LogKind::Bad,
+                    ));
+                    failures += 1;
+                }
             }
 
             let before = get_timezone();
@@ -226,18 +277,26 @@ impl App {
                         out.push((format!("时区已是 {}", tz), LogKind::Info));
                     }
                 }
-                Err(e) => out.push((format!("时区切换失败: {}", e), LogKind::Bad)),
+                Err(e) => {
+                    out.push((format!("时区切换失败: {}", e), LogKind::Bad));
+                    failures += 1;
+                }
             }
 
             match set_culture(&culture) {
                 Ok(_) => out.push((format!("区域语言  → {}", culture), LogKind::Ok)),
-                Err(e) => out.push((format!("区域语言失败: {}", e), LogKind::Warn)),
+                Err(e) => {
+                    out.push((format!("区域语言失败: {}", e), LogKind::Bad));
+                    failures += 1;
+                }
             }
 
             // 首选 UI 语言刻意不动（语言包缺失会让界面异常，且需注销才生效）
-            out.push(("首选 UI 语言：保持原样（本工具不改这里）".into(), LogKind::Info));
+            out.push((
+                "首选 UI 语言：保持原样（本工具不改这里）".into(),
+                LogKind::Info,
+            ));
 
-            let mut failures = 0usize;
             if browser_busy {
                 out.push((
                     format!("浏览器正在运行（{}），已跳过语言设置", running.join(", ")),
@@ -251,17 +310,27 @@ impl App {
             } else {
                 let (blog, bfail) = set_browser_language(&bl);
                 for l in blog {
-                    let k = if l.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
+                    let k = if l.starts_with('✗') {
+                        LogKind::Bad
+                    } else {
+                        LogKind::Ok
+                    };
                     out.push((l, k));
                 }
                 failures += bfail;
             }
 
-            out.push(("请重启 Claude Code（常驻进程不重读时区）".into(), LogKind::Warn));
+            out.push((
+                "请重启 Claude Code（常驻进程不重读时区）".into(),
+                LogKind::Warn,
+            ));
 
             // 有失败就不说"完成"，别让用户以为全好了
             if failures > 0 {
-                out.push((format!("结束，但有 {} 项未完成，请看上方 ✗ 行", failures), LogKind::Bad));
+                out.push((
+                    format!("结束，但有 {} 项未完成，请看上方 ✗ 行", failures),
+                    LogKind::Bad,
+                ));
             } else {
                 out.push(("完成 · 去检测页刷新复测".into(), LogKind::Ok));
             }
@@ -283,19 +352,24 @@ impl App {
         };
         self.busy = true;
         self.push_log(format!("── 还原到 {} ──", b.culture), LogKind::Info);
-        let tx = self.tx.clone();
 
-        thread::spawn(move || {
+        self.spawn_task(move |tx| {
             let mut out: Vec<(String, LogKind)> = Vec::new();
             let mut fails = 0;
 
             match set_timezone(&b.tz_id) {
                 Ok(_) => out.push((format!("时区  → {}", b.tz_id), LogKind::Ok)),
-                Err(e) => { out.push((format!("✗ 时区还原失败: {}", e), LogKind::Bad)); fails += 1; }
+                Err(e) => {
+                    out.push((format!("✗ 时区还原失败: {}", e), LogKind::Bad));
+                    fails += 1;
+                }
             }
             match set_culture(&b.culture) {
                 Ok(_) => out.push((format!("区域语言  → {}", b.culture), LogKind::Ok)),
-                Err(e) => { out.push((format!("✗ 区域语言还原失败: {}", e), LogKind::Bad)); fails += 1; }
+                Err(e) => {
+                    out.push((format!("✗ 区域语言还原失败: {}", e), LogKind::Bad));
+                    fails += 1;
+                }
             }
             // 备份里的 ui_langs 不再还原：本工具已改为不写首选 UI 语言，
             // 保留字段读取只为兼容旧备份。明确告知，不静默忽略。
@@ -312,13 +386,20 @@ impl App {
                     if running.is_empty() {
                         let (blog, bfail) = set_browser_language(l);
                         for line in blog {
-                            let k = if line.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
+                            let k = if line.starts_with('✗') {
+                                LogKind::Bad
+                            } else {
+                                LogKind::Ok
+                            };
                             out.push((line, k));
                         }
                         fails += bfail;
                     } else {
                         out.push((
-                            format!("浏览器正在运行（{}），已跳过浏览器语言还原", running.join(", ")),
+                            format!(
+                                "浏览器正在运行（{}），已跳过浏览器语言还原",
+                                running.join(", ")
+                            ),
                             LogKind::Warn,
                         ));
                         out.push((
@@ -378,7 +459,18 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_tasks();
         let p = Palette::for_theme(self.theme);
-        apply_theme(ctx, self.theme);
+
+        // 只在主题真正变化时重建全局样式：apply_theme 会 clone 整个 Style
+        // （内含 BTreeMap 等堆分配）再写回全局，每帧做一次纯属浪费。
+        if self.applied_theme != Some(self.theme) {
+            apply_theme(ctx, self.theme);
+            self.applied_theme = Some(self.theme);
+        }
+
+        // 时区对照条要显示"北京 HH:MM → 目标 HH:MM"。egui 默认只在有输入时重绘，
+        // 空闲时分钟不会跳，钟点会一直停在启动那一刻 —— 而这恰是本工具的卖点。
+        // 每秒请求一次重绘，代价很低。
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
 
         // 自绘标题栏（替代系统原生标题栏那一行）
         draw_titlebar(ctx, self, p);
@@ -407,7 +499,7 @@ impl eframe::App for App {
                 ui.add_space(11.0);
 
                 draw_log(ui, self, p);
-                })
+            })
             .response
             .rect
             .height();
@@ -461,13 +553,16 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
                         Theme::Dark => ("浅色", "切换到浅色主题"),
                         Theme::Light => ("深色", "切换到深色主题"),
                     };
-                    let btn = egui::Button::new(
-                        egui::RichText::new(label).color(p.fg_dim).size(11.0),
-                    )
-                    .fill(p.panel)
-                    .stroke(egui::Stroke::new(1.0_f32, p.line))
-                    .corner_radius(6.0);
-                    if ui.add_sized([46.0, 22.0], btn).on_hover_text(hover).clicked() {
+                    let btn =
+                        egui::Button::new(egui::RichText::new(label).color(p.fg_dim).size(11.0))
+                            .fill(p.panel)
+                            .stroke(egui::Stroke::new(1.0_f32, p.line))
+                            .corner_radius(6.0);
+                    if ui
+                        .add_sized([46.0, 22.0], btn)
+                        .on_hover_text(hover)
+                        .clicked()
+                    {
                         app.theme = match app.theme {
                             Theme::Dark => Theme::Light,
                             Theme::Light => Theme::Dark,
@@ -490,7 +585,7 @@ fn draw_header(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                     .color(p.fg),
             );
             ui.label(
-                egui::RichText::new("时区 · 区域语言 · UI 语言 · 浏览器语言")
+                egui::RichText::new("时区 · 区域语言 · 浏览器语言")
                     .size(10.5)
                     .color(p.fg_mute),
             );
@@ -527,10 +622,8 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                     } else {
                         (p.ok, "已规避")
                     };
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(8.0, 8.0),
-                        egui::Sense::hover(),
-                    );
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
                     ui.painter().circle_filled(rect.center(), 3.5, dot);
                     ui.label(egui::RichText::new(txt).size(11.0).color(dot));
                 });
@@ -541,7 +634,13 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             ui.add_space(7.0);
 
             // 读数行
-            reading(ui, "时区", &f.tz_id, p, Some(if f.is_china_tz { p.danger } else { p.ok }));
+            reading(
+                ui,
+                "时区",
+                &f.tz_id,
+                p,
+                Some(if f.is_china_tz { p.danger } else { p.ok }),
+            );
             reading(ui, "本地时间", &f.now, p, None);
             reading(ui, "区域语言", &f.culture, p, None);
             reading(
@@ -690,7 +789,10 @@ fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             .color(txt_color),
     )
     .fill(if enabled { p.panel } else { p.well })
-    .stroke(egui::Stroke::new(1.0_f32, if enabled { p.line } else { p.well }))
+    .stroke(egui::Stroke::new(
+        1.0_f32,
+        if enabled { p.line } else { p.well },
+    ))
     .corner_radius(8.0)
     .min_size(egui::vec2(ui.available_width(), 34.0));
 
@@ -701,9 +803,9 @@ fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
     } else {
         // 备份路径/免责说明收进 hover：需要时才看，不占界面一行
         resp.on_hover_text(
-            "还原到切换前的时区 / 区域语言 / UI 语言 / 浏览器语言\n\
+            "还原到切换前的时区 / 区域语言 / 浏览器语言\n\
              备份位于 %LOCALAPPDATA%\\ClaudeFingerprint\\backup.json\n\
-             本工具只改本机指纹，不代理 IP",
+             本工具只改本机指纹，不代理 IP；界面语言不受影响",
         );
         if clicked {
             app.restore();
@@ -732,12 +834,10 @@ fn draw_others(ui: &mut egui::Ui, app: &mut App, p: Palette) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         for (key, label) in others {
-            let btn = egui::Button::new(
-                egui::RichText::new(label).color(p.fg_dim).size(11.0),
-            )
-            .fill(p.panel)
-            .stroke(egui::Stroke::new(1.0_f32, p.line))
-            .corner_radius(6.0);
+            let btn = egui::Button::new(egui::RichText::new(label).color(p.fg_dim).size(11.0))
+                .fill(p.panel)
+                .stroke(egui::Stroke::new(1.0_f32, p.line))
+                .corner_radius(6.0);
             if ui
                 .add_sized([bw, 28.0], btn)
                 .on_hover_text(info(key).sub)
@@ -747,28 +847,35 @@ fn draw_others(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                 app.switch_to(key);
             }
         }
-        let refresh = egui::Button::new(
-            egui::RichText::new("刷新").color(p.fg_dim).size(11.0),
-        )
-        .fill(p.panel)
-        .stroke(egui::Stroke::new(1.0_f32, p.line))
-        .corner_radius(6.0);
+        let refresh = egui::Button::new(egui::RichText::new("刷新").color(p.fg_dim).size(11.0))
+            .fill(p.panel)
+            .stroke(egui::Stroke::new(1.0_f32, p.line))
+            .corner_radius(6.0);
         if ui.add_sized([bw, 28.0], refresh).clicked() {
             app.fp = read_fingerprint();
             app.push_log("已刷新指纹状态".into(), LogKind::Info);
         }
 
-        let web = egui::Button::new(
-            egui::RichText::new("检测页").color(p.fg_dim).size(11.0),
-        )
-        .fill(p.panel)
-        .stroke(egui::Stroke::new(1.0_f32, p.line))
-        .corner_radius(6.0);
+        let web = egui::Button::new(egui::RichText::new("检测页").color(p.fg_dim).size(11.0))
+            .fill(p.panel)
+            .stroke(egui::Stroke::new(1.0_f32, p.line))
+            .corner_radius(6.0);
         if ui.add_sized([bw, 28.0], web).clicked() {
-            let _ = std::process::Command::new("cmd")
-                .args(["/C", "start", "https://ip.net.coffee/claude/"])
-                .spawn();
-            app.push_log("已在浏览器打开检测页".into(), LogKind::Info);
+            // 用 webbrowser crate（走 ShellExecuteW）而不是 `cmd /C start`：
+            //   - `Command::new("cmd")` 是裸名，会按 CreateProcess 的搜索顺序
+            //     （应用目录 → 当前目录 → System32 → …）找 cmd.exe，同目录或
+            //     当前目录里的假 cmd.exe 能劫持它 —— 与本项目 sys_tool() 的
+            //     绝对路径加固理念自相矛盾。
+            //   - `cmd /C start <串>` 会重新解析该字符串，将来 URL 一旦变成
+            //     可配置/可拼接，`&`、`^`、`"` 立刻变成命令注入面。
+            // webbrowser 已在依赖树里（egui-winit 引入），直接用它的 API 最干净。
+            match webbrowser::open(DETECT_PAGE_URL) {
+                Ok(()) => app.push_log("已在浏览器打开检测页".into(), LogKind::Info),
+                Err(e) => app.push_log(
+                    format!("打开检测页失败: {} —— 请手动访问 {}", e, DETECT_PAGE_URL),
+                    LogKind::Warn,
+                ),
+            }
         }
     });
 }
@@ -790,11 +897,7 @@ fn draw_log(ui: &mut egui::Ui, app: &mut App, p: Palette) {
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if app.busy {
-                ui.label(
-                    egui::RichText::new("处理中…")
-                        .size(10.5)
-                        .color(p.warn),
-                );
+                ui.label(egui::RichText::new("处理中…").size(10.5).color(p.warn));
             }
         });
     });
@@ -835,7 +938,13 @@ fn draw_log(ui: &mut egui::Ui, app: &mut App, p: Palette) {
 // 小组件
 // ============================================================
 /// 一行读数：左标签 + 右等宽值
-fn reading(ui: &mut egui::Ui, label: &str, value: &str, p: Palette, value_color: Option<egui::Color32>) {
+fn reading(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    p: Palette,
+    value_color: Option<egui::Color32>,
+) {
     ui.horizontal(|ui| {
         ui.add_sized(
             [70.0, 18.0],
@@ -854,9 +963,8 @@ fn reading(ui: &mut egui::Ui, label: &str, value: &str, p: Palette, value_color:
 
 /// 细分隔线
 fn hairline(ui: &mut egui::Ui, p: Palette) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 1.0),
-        egui::Sense::hover(),
-    );
-    ui.painter().rect_filled(rect, egui::CornerRadius::same(0), p.line);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(0), p.line);
 }

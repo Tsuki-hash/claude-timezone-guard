@@ -21,12 +21,12 @@ pub struct ProfileInfo {
     pub key: Profile,
     pub label: &'static str,
     pub sub: &'static str,
-    pub tz: &'static str,           // Windows 时区 ID
-    pub culture: &'static str,      // 区域格式 (Set-Culture)
+    pub tz: &'static str,      // Windows 时区 ID
+    pub culture: &'static str, // 区域格式 (Set-Culture)
     pub browser_lang: &'static str, // Chrome/Edge accept_languages
-    // 刻意没有 ui_lang：首选 UI 语言 (PreferredUILanguages) 本工具只读不写。
-    // 写入它需要目标语言包已安装（HKLM\...\MUI\UILanguages），否则开始菜单/设置
-    // 会回退成英文或乱码，且必须注销才生效 —— 收益为零、风险很高，见 README。
+                               // 刻意没有 ui_lang：首选 UI 语言 (PreferredUILanguages) 本工具只读不写。
+                               // 写入它需要目标语言包已安装（HKLM\...\MUI\UILanguages），否则开始菜单/设置
+                               // 会回退成英文或乱码，且必须注销才生效 —— 收益为零、风险很高，见 README。
 }
 
 pub const PROFILES: &[ProfileInfo] = &[
@@ -117,8 +117,20 @@ pub fn target_utc_offset_at(
     if matches!(key, Profile::California | Profile::NewYork) {
         let is_dst = north_america_dst(now);
         let hours = match key {
-            Profile::California => if is_dst { -7 } else { -8 },
-            Profile::NewYork => if is_dst { -4 } else { -5 },
+            Profile::California => {
+                if is_dst {
+                    -7
+                } else {
+                    -8
+                }
+            }
+            Profile::NewYork => {
+                if is_dst {
+                    -4
+                } else {
+                    -5
+                }
+            }
             _ => unreachable!(),
         };
         return chrono::FixedOffset::east_opt(hours * 3600).unwrap();
@@ -155,11 +167,9 @@ pub fn north_america_dst(utc: chrono::DateTime<chrono::Utc>) -> bool {
     };
 
     // 3 月第二个周日 当地 02:00 PST = 10:00 UTC
-    let start =
-        chrono::Utc.from_utc_datetime(&nth_sunday(3, 2).and_hms_opt(10, 0, 0).unwrap());
+    let start = chrono::Utc.from_utc_datetime(&nth_sunday(3, 2).and_hms_opt(10, 0, 0).unwrap());
     // 11 月第一个周日 当地 02:00 PDT = 09:00 UTC
-    let end =
-        chrono::Utc.from_utc_datetime(&nth_sunday(11, 1).and_hms_opt(9, 0, 0).unwrap());
+    let end = chrono::Utc.from_utc_datetime(&nth_sunday(11, 1).and_hms_opt(9, 0, 0).unwrap());
 
     utc >= start && utc < end
 }
@@ -190,7 +200,9 @@ pub fn read_fingerprint() -> Fingerprint {
     Fingerprint {
         is_china_tz: tz_id == "China Standard Time",
         tz_id,
-        now: chrono::Local::now().format("%Y-%m-%d %H:%M:%S %:z").to_string(),
+        now: chrono::Local::now()
+            .format("%Y-%m-%d %H:%M:%S %:z")
+            .to_string(),
         culture,
         sys_locale: read_reg_str(
             winreg::enums::HKEY_LOCAL_MACHINE,
@@ -246,13 +258,22 @@ pub fn read_reg_str(hive: winreg::HKEY, path: &str, name: &str) -> Option<String
 
 /// 只写 HKCU 的受支持键位。
 /// 白名单而非任意 path/name：这是唯一的注册表写入口，必须让调用方无法
-/// 拼出任意路径去写系统其他位置。权限用 KEY_SET_VALUE 而非 KEY_ALL_ACCESS，
-/// 本工具只需要设值，不需要改 DAC/所有者。
+/// 拼出任意路径去写系统其他位置。
+///
+/// 权限只要 `KEY_SET_VALUE`：本工具只设值，不需要建子键、不需要 KEY_ALL_ACCESS
+/// （后者含 WRITE_DAC / WRITE_OWNER）。这一点是实测修正 —— 早先用的
+/// `create_subkey()` 在 winreg 里等价于 `create_subkey_with_flags(KEY_ALL_ACCESS)`
+/// （见 winreg-0.52 src/reg_key.rs:240），与"最小权限"的注释不符：在管理员
+/// 刻意收紧该键 ACL 的环境里，KEY_ALL_ACCESS 允许改写 DACL 绕过限制。
+/// 这三个值所在的 `Control Panel\International` 在任何 Windows 上都存在，
+/// 用 `open_subkey_with_flags` 打开即可；万一打不开会明确报错。
 ///
 /// 注意白名单里**没有** `Control Panel\Desktop\PreferredUILanguages` 与
 /// `International\User Profile\Languages`：首选 UI 语言本工具只读不写，
 /// 理由见 ProfileInfo 上方注释与 README。
 fn write_hkcu_value(path: &str, name: &str, val: &str) -> Result<(), String> {
+    use winreg::enums::KEY_SET_VALUE;
+
     const SUPPORTED: &[(&str, &[&str])] = &[(
         r"Control Panel\International",
         &["Locale", "LocaleName", "sLanguage"],
@@ -266,9 +287,12 @@ fn write_hkcu_value(path: &str, name: &str, val: &str) -> Result<(), String> {
     }
 
     let k = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    let (sub, _) = k
-        .create_subkey(path)
-        .map_err(|e| format!("打开注册表失败 {}: {}", path, e))?;
+    let sub = k.open_subkey_with_flags(path, KEY_SET_VALUE).map_err(|e| {
+        format!(
+            "打开注册表键失败 {}: {}（该系统可能不存在此键，预期它应当存在）",
+            path, e
+        )
+    })?;
     // REG_SZ
     sub.set_value(name, &val)
         .map_err(|e| format!("写入注册表失败 {}\\{}: {}", path, name, e))
@@ -324,8 +348,9 @@ pub fn set_timezone(tz: &str) -> Result<(), String> {
         .output()
         .map_err(|e| format!("执行 tzutil 失败: {}", e))?;
     if out.status.success() {
-        // 广播 WM_SETTINGCHANGE，让已运行的进程知道时区变了
-        broadcast_setting_change();
+        // tzutil /s 自己会广播时区变更，这里用 "intl" 再补一次覆盖那些只监听
+        // 区域/格式变更的进程（Windows 的时间/时区同属 intl 范畴）。
+        broadcast_setting_change("intl");
         Ok(())
     } else {
         Err(format!(
@@ -336,10 +361,13 @@ pub fn set_timezone(tz: &str) -> Result<(), String> {
 }
 
 /// 广播 WM_SETTINGCHANGE（SendMessageTimeout HWND_BROADCAST）
-/// tzutil /s 本身会广播时区变更，但区域/语言变更不会，这里补上
-fn broadcast_setting_change() {
-    use std::os::windows::ffi::OsStrExt;
+///
+/// `area` 必须与变更内容对应，否则监听者不会重读对应的东西：
+///   - `"intl"`        —— 区域 / 语言 / 日期时间格式变更
+///   - `"Environment"` —— 环境变量变更（不是区域变更！）
+fn broadcast_setting_change(area: &str) {
     use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
 
     #[link(name = "user32", kind = "dylib")]
     extern "system" {
@@ -358,7 +386,7 @@ fn broadcast_setting_change() {
     const HWND_BROADCAST: *mut core::ffi::c_void = 0xFFFF as *mut core::ffi::c_void;
     const SMTO_ABORTIFHUNG: u32 = 0x0002;
 
-    let wide: Vec<u16> = OsStr::new("Environment")
+    let wide: Vec<u16> = OsStr::new(area)
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
@@ -396,31 +424,25 @@ pub fn set_culture(culture: &str) -> Result<(), String> {
     // culture 形如 "en-US"; Locale 是 "00000409" 这种十六进制 LCID
     let lcid = culture_to_lcid(culture)?;
 
-    write_hkcu_value(
-        r"Control Panel\International",
-        "Locale",
-        &lcid,
-    )?;
-    write_hkcu_value(
-        r"Control Panel\International",
-        "LocaleName",
-        culture,
-    )?;
+    write_hkcu_value(r"Control Panel\International", "Locale", &lcid)?;
+    write_hkcu_value(r"Control Panel\International", "LocaleName", culture)?;
     // sLanguage 只在能确定映射时写；未知 culture 宁可不写也不写错值
     if let Some(code) = culture_lang_code(culture) {
-        write_hkcu_value(
-            r"Control Panel\International",
-            "sLanguage",
-            code,
-        )?;
+        write_hkcu_value(r"Control Panel\International", "sLanguage", code)?;
     }
     // sCountry 故意不碰：Set-Culture 也不写它，写空串会让部分程序读到空值
+    // 改完必须广播 "intl"：正在运行的资源管理器等不会自己重读区域格式，
+    // 不广播的话用户会以为没生效（Set-Culture 本身也是靠这个通知）。
+    broadcast_setting_change("intl");
     Ok(())
 }
 
 /// culture -> 十六进制 LCID。
 /// 查不到就报错，**绝不猜一个默认值**：把 `Locale` 写成 00000409(en-US) 而
 /// `LocaleName` 是别的值，会让这两个键自相矛盾，比直接失败更难排查。
+///
+/// 大小写不敏感：`valid_culture`（备份校验）允许 `en-us` 这种写法，
+/// 这里必须同样放行，否则会出现"备份校验通过但还原时失败"的口径不一致。
 fn culture_to_lcid(c: &str) -> Result<String, String> {
     // 只列画像用到的；新增画像时这里必须同步补上，否则 set_culture 会明确报错
     const MAP: &[(&str, &str)] = &[
@@ -431,7 +453,7 @@ fn culture_to_lcid(c: &str) -> Result<String, String> {
         ("ja-JP", "00000411"),
     ];
     MAP.iter()
-        .find(|(k, _)| *k == c)
+        .find(|(k, _)| k.eq_ignore_ascii_case(c))
         .map(|(_, v)| v.to_string())
         .ok_or_else(|| {
             format!(
@@ -443,13 +465,18 @@ fn culture_to_lcid(c: &str) -> Result<String, String> {
 
 /// 按完整 culture 映射 sLanguage（三字母语言标识）。
 /// zh-TW 必须是 CHT（繁体），不能按前缀猜成 CHS —— 那会和 LocaleName=zh-TW 自相矛盾。
+/// 同样大小写不敏感，与 `culture_to_lcid` / `valid_culture` 保持一致。
 fn culture_lang_code(c: &str) -> Option<&'static str> {
-    match c {
-        "zh-CN" => Some("CHS"),
-        "zh-TW" => Some("CHT"),
-        "en-US" | "en-SG" => Some("ENU"),
-        "ja-JP" => Some("JPN"),
-        _ => None, // 未知 culture 不写 sLanguage，而不是猜一个错值
+    if c.eq_ignore_ascii_case("zh-CN") {
+        Some("CHS")
+    } else if c.eq_ignore_ascii_case("zh-TW") {
+        Some("CHT")
+    } else if c.eq_ignore_ascii_case("en-US") || c.eq_ignore_ascii_case("en-SG") {
+        Some("ENU")
+    } else if c.eq_ignore_ascii_case("ja-JP") {
+        Some("JPN")
+    } else {
+        None
     }
 }
 
@@ -544,7 +571,11 @@ mod tests {
             let i = info(key);
             assert_eq!(i.key, key, "info() 返回了错误的条目");
             assert!(!i.label.is_empty());
-            assert!(i.tz.ends_with(" Standard Time"), "非 Windows 时区 ID: {}", i.tz);
+            assert!(
+                i.tz.ends_with(" Standard Time"),
+                "非 Windows 时区 ID: {}",
+                i.tz
+            );
         }
     }
 
@@ -584,6 +615,35 @@ mod tests {
                 bad
             );
         }
+    }
+
+    #[test]
+    fn culture_映射大小写不敏感() {
+        // 回归防护：valid_culture（备份校验）放行 "en-us"，若这两个映射函数
+        // 大小写敏感，就会出现"备份校验通过、还原时报不支持"的口径不一致。
+        for (input, lcid) in [
+            ("en-us", "00000409"),
+            ("EN-US", "00000409"),
+            ("En-Us", "00000409"),
+            ("ZH-cn", "00000804"),
+            ("zh-tw", "00000404"),
+            ("ja-jp", "00000411"),
+            ("en-sg", "00004809"),
+        ] {
+            assert_eq!(
+                culture_to_lcid(input).unwrap(),
+                lcid,
+                "{:?} 应映射到 {}",
+                input,
+                lcid
+            );
+        }
+        // sLanguage 同样要不敏感，且简繁不能混淆
+        assert_eq!(culture_lang_code("zh-cn"), Some("CHS"));
+        assert_eq!(culture_lang_code("ZH-TW"), Some("CHT"));
+        assert_eq!(culture_lang_code("en-US"), Some("ENU"));
+        assert_eq!(culture_lang_code("JA-jp"), Some("JPN"));
+        assert_eq!(culture_lang_code("de-de"), None);
     }
 
     #[test]
@@ -629,9 +689,15 @@ mod tests {
     #[test]
     fn 风险分_只中一项时分级正确() {
         // 只时区是中国
-        assert_eq!(risk_score(&fp("China Standard Time", "en-US")), (50, "高危"));
+        assert_eq!(
+            risk_score(&fp("China Standard Time", "en-US")),
+            (50, "高危")
+        );
         // 只区域格式是 zh-CN
-        assert_eq!(risk_score(&fp("Singapore Standard Time", "zh-CN")), (15, "低危"));
+        assert_eq!(
+            risk_score(&fp("Singapore Standard Time", "zh-CN")),
+            (15, "低危")
+        );
     }
 
     #[test]
@@ -700,7 +766,10 @@ mod tests {
                 key
             );
         }
-        assert_eq!(target_utc_offset(Profile::Tokyo).local_minus_utc(), 9 * 3600);
+        assert_eq!(
+            target_utc_offset(Profile::Tokyo).local_minus_utc(),
+            9 * 3600
+        );
     }
 
     // ---------- 其他纯函数 ----------

@@ -5,8 +5,17 @@
 //!   browser.rs —— 浏览器 Preferences 读写 + 备份还原
 //!   ui.rs      —— egui 界面与主题
 //!   main.rs    —— CLI 入口与程序启动
-
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//!
+//! # 为什么**不**声明 windows_subsystem = "windows"
+//!
+//! 早先 release 构建声明了 GUI 子系统，这在"同一个 exe 兼做 CLI"的设计下是错的：
+//! GUI 子系统进程不附着任何控制台，从 PowerShell 里跑 `claude-fingerprint status`
+//! 会拿不到任何输出（重定向到文件是 0 字节），`println!` 还会因为写不出去而 panic
+//! （os error 232 管道正在被关闭），退出码也随之不可靠 —— 与"便于脚本化"的
+//! 设计目标直接冲突。
+//!
+//! 现在的做法：保持控制台子系统（CLI 完全可用），仅在真正启动图形界面时
+//! 把控制台窗口隐藏掉（见 hide_console_window），视觉上与 GUI 程序无异。
 
 mod browser;
 mod core;
@@ -14,6 +23,43 @@ mod ui;
 
 use crate::browser::{load_backup, save_backup, set_browser_language};
 use crate::core::*;
+
+/// 隐藏控制台窗口，但**仅当这个控制台是本进程独占时**。
+///
+/// 为什么必须判断独占：`GetConsoleWindow()` 返回的是「本进程所附着的那个控制台」
+/// 的窗口。当用户从已有的 PowerShell/cmd 窗口里运行本程序时，那是**与父 shell
+/// 共享的同一个 HWND** —— 直接 SW_HIDE 会把用户的终端窗口一起隐藏掉
+/// （进程还在跑，窗口没了，只能从任务栏找回来）。只有"双击 exe"这种情况，
+/// 系统才为本进程新建一个独占控制台，此时隐藏它才是安全且期望的行为。
+///
+/// `GetConsoleProcessList` 返回附着到该控制台的进程数：只有本进程（==1）才隐藏。
+fn hide_console_window_if_exclusive() {
+    use ::std::ffi::c_void;
+
+    #[link(name = "kernel32", kind = "dylib")]
+    extern "system" {
+        fn GetConsoleWindow() -> *mut c_void;
+        fn GetConsoleProcessList(process_list: *mut u32, count: u32) -> u32;
+    }
+    #[link(name = "user32", kind = "dylib")]
+    extern "system" {
+        fn ShowWindow(hwnd: *mut c_void, cmd: i32) -> i32;
+    }
+    const SW_HIDE: i32 = 0;
+
+    unsafe {
+        let mut pids = [0u32; 2];
+        let n = GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32);
+        // n > 1 说明还有别的进程（父 shell）共用这个控制台，不能隐藏
+        if n != 1 {
+            return;
+        }
+        let hwnd = GetConsoleWindow();
+        if !hwnd.is_null() {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+}
 
 /// 加载微软雅黑，保证中文正常渲染
 fn setup_fonts(ctx: &egui::Context) {
@@ -60,23 +106,21 @@ fn main() -> Result<(), eframe::Error> {
                 cli_status();
                 std::process::exit(0);
             }
-            "apply" => {
-                match args.get(2) {
-                    Some(name) => match parse_profile(name) {
-                        Some(p) => std::process::exit(cli_apply(p)),
-                        None => {
-                            eprintln!("未知画像: {}", name);
-                            cli_usage();
-                            std::process::exit(2);
-                        }
-                    },
+            "apply" => match args.get(2) {
+                Some(name) => match parse_profile(name) {
+                    Some(p) => std::process::exit(cli_apply(p)),
                     None => {
-                        eprintln!("apply 需要一个画像名");
+                        eprintln!("未知画像: {}", name);
                         cli_usage();
                         std::process::exit(2);
                     }
+                },
+                None => {
+                    eprintln!("apply 需要一个画像名");
+                    cli_usage();
+                    std::process::exit(2);
                 }
-            }
+            },
             "restore" => {
                 std::process::exit(cli_restore());
             }
@@ -96,6 +140,10 @@ fn main() -> Result<(), eframe::Error> {
             }
         }
     }
+
+    // 走到这里说明没有 CLI 子命令 —— 启动图形界面。
+    // 隐藏控制台窗口（仅当它是本进程独占时，否则会连带隐藏用户的终端）
+    hide_console_window_if_exclusive();
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -174,10 +222,7 @@ fn cli_apply(p: Profile) -> i32 {
     let mut skip_browser = false;
     let running = running_browsers();
     if !running.is_empty() {
-        println!(
-            "⚠ 检测到浏览器正在运行: {}",
-            running.join(", ")
-        );
+        println!("⚠ 检测到浏览器正在运行: {}", running.join(", "));
         println!("  已跳过浏览器语言设置 —— 运行中改写会被浏览器退出时覆盖。");
         println!("  请完全退出浏览器后重新运行本命令。");
         skip_browser = true;
@@ -186,22 +231,35 @@ fn cli_apply(p: Profile) -> i32 {
     match save_backup() {
         Ok(Some(m)) => println!("✓ {}", m),
         Ok(None) => {}
-        Err(e) => { println!("✗ 备份失败: {}", e); fails += 1; }
+        Err(e) => {
+            println!("✗ 备份失败: {}", e);
+            fails += 1;
+        }
     }
     let before = get_timezone();
     match set_timezone(inf.tz) {
         Ok(_) => println!("✓ 时区: {} -> {}", before, inf.tz),
-        Err(e) => { println!("✗ 时区切换失败: {}", e); fails += 1; }
+        Err(e) => {
+            println!("✗ 时区切换失败: {}", e);
+            fails += 1;
+        }
     }
     match set_culture(inf.culture) {
         Ok(_) => println!("✓ 区域语言: -> {}", inf.culture),
-        Err(e) => { println!("✗ 区域语言失败: {}", e); fails += 1; }
+        Err(e) => {
+            println!("✗ 区域语言失败: {}", e);
+            fails += 1;
+        }
     }
     // 首选 UI 语言刻意不动：需要语言包已安装且必须注销才生效，风险高于收益
     println!("· 首选 UI 语言：本工具不动（避免语言包缺失导致界面异常）");
 
     if skip_browser {
-        println!("· 浏览器语言：已跳过（浏览器在运行）");
+        // 必须计入失败：浏览器语言确实没写成功。原先只打印一行、不加计数，
+        // 于是 `apply sg && echo OK` 会拿到退出码 0，脚本据此误判为完全成功。
+        // GUI 侧同一情形是计入 failures 的，两套入口结论必须一致。
+        println!("✗ 浏览器语言：未设置（浏览器在运行，已跳过）");
+        fails += 1;
     } else {
         let (blog, bfail) = set_browser_language(inf.browser_lang);
         for l in blog {
@@ -210,7 +268,7 @@ fn cli_apply(p: Profile) -> i32 {
         fails += bfail;
     }
     if fails > 0 {
-        println!("✗ 完成，但有 {} 项失败", fails);
+        println!("✗ 完成，但有 {} 项未完成（见上方 ✗ 行）", fails);
         return 1;
     }
     println!("★ 完成");
@@ -229,11 +287,17 @@ fn cli_restore() -> i32 {
     println!("===== 还原到 {} / {} =====", b.tz_id, b.culture);
     match set_timezone(&b.tz_id) {
         Ok(_) => println!("✓ 时区 -> {}", b.tz_id),
-        Err(e) => { println!("✗ 时区还原失败: {}", e); fails += 1; }
+        Err(e) => {
+            println!("✗ 时区还原失败: {}", e);
+            fails += 1;
+        }
     }
     match set_culture(&b.culture) {
         Ok(_) => println!("✓ 区域语言 -> {}", b.culture),
-        Err(e) => { println!("✗ 区域语言还原失败: {}", e); fails += 1; }
+        Err(e) => {
+            println!("✗ 区域语言还原失败: {}", e);
+            fails += 1;
+        }
     }
     // 备份里的 ui_langs 不再还原：本工具已改为不写首选 UI 语言。
     // 保留字段读取只为兼容旧备份，这里明确告知而不是静默忽略。

@@ -254,6 +254,7 @@ dependencies = [
  "egui",
  "serde",
  "serde_json",
+ "webbrowser",
  "winreg",
 ]
 
