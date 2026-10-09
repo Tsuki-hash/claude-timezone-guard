@@ -283,9 +283,12 @@ impl Fingerprint {
         if self.tz_id != "China Standard Time" {
             return TzTier::None;
         }
-        match self.geo_id.as_str() {
-            "133" | "140" => TzTier::Partial, // GeoID: Hong Kong / Macao
-            _ => TzTier::Full,                // CN（GeoID 45）与未知 Geo 都按大陆口径从重
+        // Geo\Nation 的编码存在系统差异：本机实测为十进制（CN="45"），
+        // 也有资料记录为十六进制字符串（HK="85"、MO="8C"）。两种都认，
+        // 都不匹配时按大陆口径从重（宁高勿低）。评审 2-4。
+        match self.geo_id.to_lowercase().as_str() {
+            "133" | "85" | "140" | "8c" => TzTier::Partial, // Hong Kong / Macao
+            _ => TzTier::Full,
         }
     }
 }
@@ -699,8 +702,8 @@ const EXTRA_CN_FONT_TOKENS: &[&str] = &[
 ];
 
 /// 国产浏览器在卸载列表/显示名里的特征（小写匹配）。
-/// 名单用「具体产品名」而不是裸 "360"/"qq"，避免把 360 安全卫士、
-/// QQ 音乐这类非浏览器软件误报进来。
+/// 名单用「具体产品名」——「夸克」「2345」这类裸 token 会把夸克网盘、
+/// 2345好压（均非浏览器）误报进来（评审 2-5）。
 const CN_BROWSER_TOKENS: &[&str] = &[
     "360安全浏览器",
     "360极速浏览器",
@@ -712,10 +715,11 @@ const CN_BROWSER_TOKENS: &[&str] = &[
     "uc浏览器",
     "ucbrowser",
     "夸克浏览器",
-    "夸克",
     "百度浏览器",
     "baidubrowser",
-    "2345",
+    "2345王牌浏览器",
+    "2345加速浏览器",
+    "2345浏览器",
     "猎豹安全浏览器",
     "傲游",
     "华为浏览器",
@@ -1321,6 +1325,13 @@ mod tests {
         let mut mo = fp("China Standard Time", "en-US");
         mo.geo_id = "140".into(); // Macao GeoID
         assert_eq!(risk_score(&mo), (18, "低危"));
+        // Geo\Nation 的十六进制编码形态（评审 2-4）：HK="85"、MO="8C"
+        let mut hk_hex = fp("China Standard Time", "en-US");
+        hk_hex.geo_id = "85".into();
+        assert_eq!(risk_score(&hk_hex), (18, "低危"));
+        let mut mo_hex = fp("China Standard Time", "en-US");
+        mo_hex.geo_id = "8C".into();
+        assert_eq!(risk_score(&mo_hex), (18, "低危"));
         // Taipei：Anthropic 完全支持，零分
         assert_eq!(
             risk_score(&fp("Taipei Standard Time", "zh-TW")),
@@ -1594,6 +1605,26 @@ mod tests {
         assert!(CN_BROWSER_TOKENS
             .iter()
             .any(|t| browser.contains(&t.to_lowercase())));
+        // 评审 2-5：裸 token 会把同名非浏览器软件误报进来
+        for not_browser in ["夸克网盘", "2345好压"] {
+            let d = not_browser.to_lowercase();
+            assert!(
+                !CN_BROWSER_TOKENS
+                    .iter()
+                    .any(|t| d.contains(&t.to_lowercase())),
+                "{not_browser} 被误报为浏览器"
+            );
+        }
+        // 而真正的浏览器仍能命中
+        for browser in ["夸克浏览器", "2345王牌浏览器"] {
+            let d = browser.to_lowercase();
+            assert!(
+                CN_BROWSER_TOKENS
+                    .iter()
+                    .any(|t| d.contains(&t.to_lowercase())),
+                "{browser} 应被命中"
+            );
+        }
     }
 
     // ---------- 语言分级（P1-2） ----------

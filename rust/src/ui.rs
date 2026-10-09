@@ -929,16 +929,22 @@ fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                     }
                     // 出口侧估算入口（懒加载，点击才请求；结果进读数卡）
                     let rbtn = egui::Button::new(
-                        egui::RichText::new(if app.remote_busy { "查询中…" } else { "出口侧 ›" })
-                            .size(10.0)
-                            .color(p.accent),
+                        egui::RichText::new(if app.remote_busy {
+                            "查询中…"
+                        } else {
+                            "出口侧 ›"
+                        })
+                        .size(10.0)
+                        .color(p.accent),
                     )
                     .fill(egui::Color32::TRANSPARENT)
                     .stroke(egui::Stroke::NONE);
                     if ui
                         .add(rbtn)
                         .on_hover_text(
-                            "查询出口 IP 侧的风险估算（FuckClaude 公开接口）\n基于出口 IP 与请求头，与本机读数口径不同",
+                            "查询出口 IP 侧的风险估算（FuckClaude 公开接口）\n\
+                             基于出口 IP 与请求头，与本机读数口径不同\n\
+                             注意：该查询会把你的出口 IP 告知此第三方服务",
                         )
                         .clicked()
                         && !app.remote_busy
@@ -1102,24 +1108,22 @@ fn draw_readings(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             );
             fingerprint_row(ui, p, "字体环境", &font_txt, Some(font_color));
             fingerprint_row(ui, p, "国产浏览器", &browser_txt, Some(browser_color));
-            // 出口侧估算：本机观察不到的 IP/请求头视角（点击标题行按钮查询）
+            // 出口侧估算：本机观察不到的 IP/请求头视角（点击标题行按钮查询）。
+            // 值必须是短格式：完整 headline + Geo + 覆盖率会换行，把日志行
+            // 推出窗口底（评审 2-1：内容底边余量仅 12px，一行换行 17px）。
+            // Geo 与覆盖率在查询完成的日志里可查。
             let (remote_txt, remote_color) = match &app.remote {
                 None => ("未查询（点右上「出口侧 ›」）".to_string(), p.fg_mute),
-                Some(Err(e)) => (format!("查询失败：{e}"), p.warn),
+                Some(Err(e)) => (truncate(&format!("查询失败：{e}"), 30), p.warn),
                 Some(Ok(est)) => {
                     let c = match est.band.as_str() {
                         "high" => p.danger,
                         "medium" => p.warn,
                         _ => p.ok,
                     };
+                    let geo = est.geo_country.clone().unwrap_or_else(|| "—".into());
                     (
-                        format!(
-                            "{} · Geo {} · 覆盖 {}/{}",
-                            est.headline(),
-                            est.geo_summary(),
-                            est.measured_weight,
-                            est.total_weight
-                        ),
+                        truncate(&format!("{}/100 {} · {}", est.score, est.verdict, geo), 30),
                         c,
                     )
                 }
