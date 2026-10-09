@@ -61,22 +61,37 @@ fn main() -> Result<(), eframe::Error> {
                 std::process::exit(0);
             }
             "apply" => {
-                if let Some(name) = args.get(2) {
-                    if let Some(p) = parse_profile(name) {
-                        std::process::exit(cli_apply(p));
+                match args.get(2) {
+                    Some(name) => match parse_profile(name) {
+                        Some(p) => std::process::exit(cli_apply(p)),
+                        None => {
+                            eprintln!("未知画像: {}", name);
+                            cli_usage();
+                            std::process::exit(2);
+                        }
+                    },
+                    None => {
+                        eprintln!("apply 需要一个画像名");
+                        cli_usage();
+                        std::process::exit(2);
                     }
                 }
-                eprintln!("未知画像: {:?}", args.get(2));
-                eprintln!("可用: singapore / california / taipei / tokyo / newyork / shanghai");
-                std::process::exit(2);
             }
             "restore" => {
                 std::process::exit(cli_restore());
             }
+            "--version" | "-V" | "version" => {
+                println!("claude-fingerprint {}", env!("CARGO_PKG_VERSION"));
+                std::process::exit(0);
+            }
+            "--help" | "-h" | "help" => {
+                cli_usage();
+                std::process::exit(0);
+            }
             // 未知子命令必须报错退出，不能静默 fall through 到 GUI
             other => {
                 eprintln!("未知子命令: {}", other);
-                eprintln!("用法: claude-fingerprint [status | apply <profile> | restore]");
+                cli_usage();
                 std::process::exit(2);
             }
         }
@@ -101,6 +116,27 @@ fn main() -> Result<(), eframe::Error> {
     )
 }
 
+fn cli_usage() {
+    eprintln!("Claude 指纹切换器 {}", env!("CARGO_PKG_VERSION"));
+    eprintln!();
+    eprintln!("用法:");
+    eprintln!("  claude-fingerprint status              查看当前指纹与风险分");
+    eprintln!("  claude-fingerprint apply <画像>        切换时区 / 区域语言 / 浏览器语言");
+    eprintln!("  claude-fingerprint restore             还原到切换前的状态");
+    eprintln!("  claude-fingerprint                     不带参数 = 启动图形界面");
+    eprintln!();
+    eprintln!("可用画像:");
+    eprintln!("  singapore (sg)   新加坡   UTC+8，时钟零差异（推荐）");
+    eprintln!("  california (ca)  美国加州 Pacific Time");
+    eprintln!("  taipei (tw)      台北     UTC+8，时钟零差异");
+    eprintln!("  tokyo (jp)       东京     UTC+9");
+    eprintln!("  newyork (ny)     纽约     Eastern Time");
+    eprintln!("  shanghai (cn)    上海     恢复中国大陆默认");
+    eprintln!();
+    eprintln!("注意: 浏览器正在运行时会自动跳过浏览器语言设置——");
+    eprintln!("      运行中的 Chromium 会在退出时覆盖磁盘上的 Preferences。");
+}
+
 fn parse_profile(s: &str) -> Option<Profile> {
     match s.to_lowercase().as_str() {
         "singapore" | "sg" => Some(Profile::Singapore),
@@ -121,6 +157,7 @@ fn cli_status() {
     println!("区域语言    : {}", f.culture);
     println!("系统区域    : ACP={} Geo={}", f.sys_locale, f.geo_id);
     println!("浏览器语言  : {}", f.browser_lang);
+    println!("界面语言    : {}  (只读，本工具不改)", f.ui_langs);
     println!("Chrome 运行 : {}", f.chrome_running);
     println!("Edge   运行 : {}", f.edge_running);
     println!("风险分      : {}/65  {}", s, l);
@@ -130,6 +167,22 @@ fn cli_apply(p: Profile) -> i32 {
     let inf = info(p);
     let mut fails = 0;
     println!("===== 切换到 {} ({}) =====", inf.label, inf.tz);
+
+    // 浏览器必须先完全退出：运行中的 Chromium 会在退出时把内存里的
+    // Preferences 刷回磁盘，覆盖掉我们写入的语言设置（静默回滚）。
+    // 这里采取"拒绝执行"而不是"先写后提示"，避免用户以为改成功了。
+    let mut skip_browser = false;
+    let running = running_browsers();
+    if !running.is_empty() {
+        println!(
+            "⚠ 检测到浏览器正在运行: {}",
+            running.join(", ")
+        );
+        println!("  已跳过浏览器语言设置 —— 运行中改写会被浏览器退出时覆盖。");
+        println!("  请完全退出浏览器后重新运行本命令。");
+        skip_browser = true;
+    }
+
     match save_backup() {
         Ok(Some(m)) => println!("✓ {}", m),
         Ok(None) => {}
@@ -144,15 +197,18 @@ fn cli_apply(p: Profile) -> i32 {
         Ok(_) => println!("✓ 区域语言: -> {}", inf.culture),
         Err(e) => { println!("✗ 区域语言失败: {}", e); fails += 1; }
     }
-    match set_ui_languages(inf.ui_lang) {
-        Ok(_) => println!("✓ 首选 UI 语言: -> {}", inf.ui_lang),
-        Err(e) => { println!("✗ UI 语言失败: {}", e); fails += 1; }
+    // 首选 UI 语言刻意不动：需要语言包已安装且必须注销才生效，风险高于收益
+    println!("· 首选 UI 语言：本工具不动（避免语言包缺失导致界面异常）");
+
+    if skip_browser {
+        println!("· 浏览器语言：已跳过（浏览器在运行）");
+    } else {
+        let (blog, bfail) = set_browser_language(inf.browser_lang);
+        for l in blog {
+            println!("{}", l);
+        }
+        fails += bfail;
     }
-    let (blog, bfail) = set_browser_language(inf.browser_lang);
-    for l in blog {
-        println!("{}", l);
-    }
-    fails += bfail;
     if fails > 0 {
         println!("✗ 完成，但有 {} 项失败", fails);
         return 1;
@@ -179,14 +235,10 @@ fn cli_restore() -> i32 {
         Ok(_) => println!("✓ 区域语言 -> {}", b.culture),
         Err(e) => { println!("✗ 区域语言还原失败: {}", e); fails += 1; }
     }
-    match &b.ui_langs {
-        Some(l) => {
-            match set_ui_languages(l) {
-                Ok(_) => println!("✓ UI 语言 -> {}", l),
-                Err(e) => { println!("✗ UI 语言还原失败: {}", e); fails += 1; }
-            }
-        }
-        None => println!("· UI 语言：备份时未读取到，保持原样"),
+    // 备份里的 ui_langs 不再还原：本工具已改为不写首选 UI 语言。
+    // 保留字段读取只为兼容旧备份，这里明确告知而不是静默忽略。
+    if b.ui_langs.is_some() {
+        println!("· UI 语言：本工具不再改动（如需还原请在 Windows 语言设置里手动调整）");
     }
     match &b.browser_lang {
         Some(l) => {

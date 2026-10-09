@@ -7,7 +7,7 @@
 //!   3. fs::write 的错误必须上报，不能吞掉还报成功
 //!   4. browser_lang 用 Option：空串/读取失败时还原必须跳过，而不是清空用户配置
 
-use crate::core::{get_culture, get_timezone, read_ui_languages};
+use crate::core::{get_culture, get_timezone};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -104,29 +104,56 @@ fn write_with_backup(path: &Path, content: &str) -> Result<(), String> {
     atomic_write(path, content)
 }
 
-/// 校验 language tag 合法性，挡住 backup.json 被篡改时的垃圾值
+/// 校验 language tag 列表合法性，挡住 backup.json 被篡改时的垃圾值。
+/// 形如 `zh-CN,zh;q=0.9,en;q=0.8`：逗号分隔条目，条目内 `;q=` 是权重。
 fn valid_lang(s: &str) -> bool {
     if s.is_empty() || s.len() > 128 {
         return false;
     }
-    // 形如 zh-CN,zh;q=0.9 / en-US,en;q=0.9
-    let tag_ok = |t: &str| -> bool {
-        let t = t.trim();
+
+    /// 单个 language tag：字母开头，只含字母/数字/`-`/`_`
+    fn tag_ok(t: &str) -> bool {
         if t.is_empty() || t.len() > 35 {
             return false;
         }
-        let mut chars = t.chars();
-        let first = chars.next().unwrap();
-        if !first.is_ascii_alphabetic() {
+        if !t.chars().next().unwrap().is_ascii_alphabetic() {
             return false;
         }
         t.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    };
-    s.split(',')
-        .flat_map(|part| part.split(';'))
-        .filter(|p| !p.trim().is_empty() && !p.contains('='))
-        .all(tag_ok)
+    }
+
+    /// `q=0.9` 这类权重参数
+    fn param_ok(p: &str) -> bool {
+        match p.split_once('=') {
+            Some((k, v)) => {
+                k.trim().eq_ignore_ascii_case("q")
+                    && !v.trim().is_empty()
+                    && v.trim().parse::<f32>().is_ok()
+            }
+            None => false,
+        }
+    }
+
+    // 过滤掉空条目（",en-US," 这种多余逗号无害），但要求至少剩一个真条目：
+    // 早先直接 all() 会让 ";q=0.9" 这种"完全没有语言标签"的串通过校验。
+    let items: Vec<&str> = s.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
+    if items.is_empty() {
+        return false;
+    }
+
+    items.iter().all(|item| match item.split_once(';') {
+        // 没有权重参数
+        None => tag_ok(item),
+        // 有 `;...`：前面必须是合法标签，后面每一段都必须是合法权重
+        Some((tag, params)) => {
+            tag_ok(tag.trim())
+                && params
+                    .split(';')
+                    .filter(|p| !p.trim().is_empty())
+                    .all(|p| param_ok(p.trim()))
+        }
+    })
 }
 
 /// 设置浏览器语言。返回 (日志, 失败数)。失败全部显式上报。
@@ -218,7 +245,11 @@ pub struct Backup {
     pub version: u32,
     pub tz_id: String,
     pub culture: String,
-    /// None = 备份时读取失败，还原时不动这项设置
+    /// 已废弃：本工具改为**只读不写**首选 UI 语言（`PreferredUILanguages`），
+    /// 因为它要求目标语言包已安装、且必须注销才生效，写坏的代价远大于收益。
+    /// 字段保留只为能继续反序列化旧备份文件；新写入的备份里恒为 None。
+    /// 见 core.rs 的 ProfileInfo 注释与 README「它到底改了什么」。
+    #[serde(default)]
     pub ui_langs: Option<String>,
     /// None = 备份时未检测到浏览器，还原时不动浏览器设置
     pub browser_lang: Option<String>,
@@ -268,7 +299,8 @@ pub fn save_backup() -> Result<Option<String>, String> {
         version: default_version(),
         tz_id: get_timezone(),
         culture: get_culture(),
-        ui_langs: read_ui_languages(),
+        // 恒为 None：本工具不写首选 UI 语言，没有需要备份的东西
+        ui_langs: None,
         browser_lang: read_chrome_lang(),
     };
 
@@ -276,11 +308,12 @@ pub fn save_backup() -> Result<Option<String>, String> {
         if let Ok(txt) = fs::read_to_string(&p) {
             match serde_json::from_str::<Backup>(&txt) {
                 Ok(old) => {
-                    // 四项全相同才认为是同一状态；任一项不同都保留旧备份，
-                    // 避免用户在浏览器里手改过语言后，用污染值覆盖真正的初始备份
+                    // 三项全相同才认为是同一状态；任一项不同都保留旧备份，
+                    // 避免用户在浏览器里手改过语言后，用污染值覆盖真正的初始备份。
+                    // ui_langs 不参与比较：它已废弃，旧备份里可能是 Some 而新写入恒为 None，
+                    // 拿它比较会让"同一状态"永远判假，导致每次都多写一次备份。
                     let same = old.tz_id == cur.tz_id
                         && old.culture == cur.culture
-                        && old.ui_langs == cur.ui_langs
                         && old.browser_lang == cur.browser_lang;
                     if !same {
                         return Ok(Some(format!(
@@ -326,4 +359,186 @@ pub fn load_backup() -> Result<Backup, String> {
         }
     }
     Ok(b)
+}
+
+// ============================================================
+// 单元测试
+// ============================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---------- language tag 校验（backup.json 可被同用户态程序篡改）----------
+
+    #[test]
+    fn 接受真实画像里的语言值() {
+        // 这些必须是 PROFILES 里实际用到的值，否则切换会被自己挡住
+        for ok in [
+            "en-SG,en;q=0.9,zh-CN;q=0.8",
+            "en-US,en;q=0.9",
+            "zh-TW,zh;q=0.9,en;q=0.8",
+            "ja-JP,ja;q=0.9,en;q=0.8",
+            "zh-CN,zh;q=0.9",
+        ] {
+            assert!(valid_lang(ok), "合法语言值被拒绝: {:?}", ok);
+        }
+    }
+
+    #[test]
+    fn 拒绝空值与超长值() {
+        assert!(!valid_lang(""));
+        assert!(!valid_lang(&"a".repeat(129)));
+    }
+
+    #[test]
+    fn 拒绝以非字母开头的标签() {
+        assert!(!valid_lang("1nvalid"));
+        assert!(!valid_lang("-en-US"));
+    }
+
+    #[test]
+    fn 拒绝没有语言标签只有权重的串() {
+        // 回归防护：早先的实现把 ";" 后的部分整个丢弃再 all()，
+        // 空迭代返回 true，于是 ";q=0.9" 这种没有任何语言标签的串会被写成语言值。
+        for bad in [";q=0.9", ";", ";;", "q=0.9", ",,", " , "] {
+            assert!(!valid_lang(bad), "无语言标签的串被接受: {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn 拒绝非法权重参数() {
+        assert!(!valid_lang("en-US;q="), "空权重值");
+        assert!(!valid_lang("en-US;q=abc"), "非数字权重");
+        assert!(!valid_lang("en-US;x=0.9"), "未知参数名");
+        assert!(!valid_lang("en-US;q=0.9;q="), "第二段权重非法");
+    }
+
+    #[test]
+    fn 权重参数合法时才通过() {
+        assert!(valid_lang("en-US;q=0.9"));
+        assert!(valid_lang("en-US;q=1"));
+        assert!(valid_lang("en-US;Q=0.9"), "参数名大小写不敏感");
+        assert!(valid_lang("en-US;;q=0.9"), "多余的分号应被忽略");
+    }
+
+    #[test]
+    fn 空片段被容忍() {
+        // 说明（而不是"修"）：valid_lang 会先过滤掉空片段，所以 ",en-US" 和
+        // "en-US," 都算合法。这在 Chrome 里能被接受（等价于 ignorable 空项），
+        // 而且这些值只可能来自本工具的画像表或经过白名单校验的备份，
+        // 不构成注入面，因此保持宽松。这里把行为固定下来，避免无意间改掉。
+        assert!(valid_lang(",en-US"));
+        assert!(valid_lang("en-US,"));
+        assert!(valid_lang("en-US,,zh-CN"));
+    }
+
+    #[test]
+    fn 拒绝非法字符() {
+        // 引号/反斜杠/换行等一旦写进 JSON 会生成非法结构或注入
+        for bad in [
+            r#"en-US","evil":"x"#,
+            "en-US\nen-GB",
+            r"en-US\..\..",
+            "en US",
+            "<script>",
+        ] {
+            assert!(!valid_lang(bad), "非法语言值被接受: {:?}", bad);
+        }
+    }
+
+    #[test]
+    fn 拒绝超长单个标签() {
+        // 单个 tag 上限 35 字符
+        assert!(!valid_lang(&"a".repeat(36)));
+        assert!(valid_lang(&"a".repeat(35)));
+    }
+
+    #[test]
+    fn 允许带_q_权重的列表() {
+        assert!(valid_lang("zh-CN,zh;q=0.9,en;q=0.8"));
+        assert!(valid_lang("en-US;q=0.9"));
+    }
+
+    // ---------- culture 校验 ----------
+
+    #[test]
+    fn 接受画像里的_culture() {
+        for ok in ["zh-CN", "zh-TW", "en-US", "en-SG", "ja-JP"] {
+            assert!(valid_culture(ok), "合法 culture 被拒绝: {:?}", ok);
+        }
+    }
+
+    #[test]
+    fn culture_地区部分不区分大小写() {
+        // 代码里只要求地区部分是字母（大小写都放行），这里固定该行为
+        assert!(valid_culture("en-us"));
+        assert!(valid_culture("zh-tw"));
+    }
+
+    #[test]
+    fn 拒绝格式错误的_culture() {
+        for bad in [
+            "",            // 空
+            "en",          // 缺地区
+            "EN-US",       // 语言部分必须小写（LocaleName 规范形式）
+            "en-US-extra", // 多段
+            "zh-Hans-CN",  // 脚本子标签不支持
+            "zh_CN",       // 分隔符错
+            "zh-1",        // 地区部分要求字母
+            "zh-",         // 地区为空
+        ] {
+            assert!(!valid_culture(bad), "非法 culture 被接受: {:?}", bad);
+        }
+    }
+
+    // ---------- 时区白名单 ----------
+
+    #[test]
+    fn 时区白名单与画像表一致() {
+        // load_backup 用白名单挡住被篡改的备份；画像表里有的必须都能通过，
+        // 否则「切换 → 恢复」会在自己的备份上失败
+        for i in crate::core::PROFILES {
+            assert!(
+                known_timezone(i.tz),
+                "画像 {} 的时区 {:?} 不在备份白名单里，恢复会被拒绝",
+                i.label,
+                i.tz
+            );
+        }
+    }
+
+    #[test]
+    fn 拒绝白名单外的时区() {
+        for bad in ["", "Asia/Shanghai", "W. Europe Standard Time", "../etc"] {
+            assert!(!known_timezone(bad), "白名单外的时区被接受: {:?}", bad);
+        }
+    }
+
+    // ---------- 备份结构兼容 ----------
+
+    #[test]
+    fn 旧备份里的_ui_langs_仍能反序列化() {
+        // 已废弃字段保留 #[serde(default)]，旧备份不能因为多了这个键就打不开
+        let old = r#"{
+            "version": 1,
+            "tz_id": "China Standard Time",
+            "culture": "zh-CN",
+            "ui_langs": "zh-Hans-CN,en-US",
+            "browser_lang": "zh-CN,zh;q=0.9"
+        }"#;
+        let b: Backup = serde_json::from_str(old).expect("旧备份必须仍可读取");
+        assert_eq!(b.ui_langs.as_deref(), Some("zh-Hans-CN,en-US"));
+    }
+
+    #[test]
+    fn 缺少_ui_langs_的新备份也能读取() {
+        let new = r#"{
+            "version": 1,
+            "tz_id": "Singapore Standard Time",
+            "culture": "en-SG",
+            "browser_lang": null
+        }"#;
+        let b: Backup = serde_json::from_str(new).expect("新备份必须可读取");
+        assert!(b.ui_langs.is_none(), "ui_langs 应有 serde default 兜底");
+    }
 }

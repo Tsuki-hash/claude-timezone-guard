@@ -200,11 +200,16 @@ impl App {
         let inf = info(p);
         let tz = inf.tz.to_string();
         let culture = inf.culture.to_string();
-        let ui = inf.ui_lang.to_string();
         let bl = inf.browser_lang.to_string();
 
         thread::spawn(move || {
             let mut out: Vec<(String, LogKind)> = Vec::new();
+
+            // 浏览器必须先完全退出才能改 Preferences：运行中的 Chromium 会在
+            // 退出时用内存里的配置覆盖磁盘，把我们的改动静默回滚掉。
+            // 所以改成"先检测、在运行时直接拒绝写入"，而不是先写后提示。
+            let running = running_browsers();
+            let browser_busy = !running.is_empty();
 
             match save_backup() {
                 Ok(Some(m)) => out.push((m, LogKind::Ok)),
@@ -229,25 +234,34 @@ impl App {
                 Err(e) => out.push((format!("区域语言失败: {}", e), LogKind::Warn)),
             }
 
-            match set_ui_languages(&ui) {
-                Ok(_) => out.push((format!("首选 UI 语言  → {}", ui), LogKind::Ok)),
-                Err(e) => out.push((format!("UI 语言失败: {}", e), LogKind::Warn)),
+            // 首选 UI 语言刻意不动（语言包缺失会让界面异常，且需注销才生效）
+            out.push(("首选 UI 语言：保持原样（本工具不改这里）".into(), LogKind::Info));
+
+            let mut failures = 0usize;
+            if browser_busy {
+                out.push((
+                    format!("浏览器正在运行（{}），已跳过语言设置", running.join(", ")),
+                    LogKind::Warn,
+                ));
+                out.push((
+                    "请完全退出浏览器后，再点一次对应按钮即可写入语言".into(),
+                    LogKind::Warn,
+                ));
+                failures += 1;
+            } else {
+                let (blog, bfail) = set_browser_language(&bl);
+                for l in blog {
+                    let k = if l.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
+                    out.push((l, k));
+                }
+                failures += bfail;
             }
 
-            let (blog, bfail) = set_browser_language(&bl);
-            for l in blog {
-                let k = if l.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
-                out.push((l, k));
-            }
-
-            if process_running("chrome.exe") || process_running("msedge.exe") {
-                out.push(("浏览器正在运行，需完全退出重开才生效".into(), LogKind::Warn));
-            }
             out.push(("请重启 Claude Code（常驻进程不重读时区）".into(), LogKind::Warn));
 
             // 有失败就不说"完成"，别让用户以为全好了
-            if bfail > 0 {
-                out.push((format!("结束，但有 {} 项失败，请看上方 ✗ 行", bfail), LogKind::Bad));
+            if failures > 0 {
+                out.push((format!("结束，但有 {} 项未完成，请看上方 ✗ 行", failures), LogKind::Bad));
             } else {
                 out.push(("完成 · 去检测页刷新复测".into(), LogKind::Ok));
             }
@@ -283,23 +297,36 @@ impl App {
                 Ok(_) => out.push((format!("区域语言  → {}", b.culture), LogKind::Ok)),
                 Err(e) => { out.push((format!("✗ 区域语言还原失败: {}", e), LogKind::Bad)); fails += 1; }
             }
-            match &b.ui_langs {
-                Some(l) => {
-                    match set_ui_languages(l) {
-                        Ok(_) => out.push((format!("UI 语言  → {}", l), LogKind::Ok)),
-                        Err(e) => { out.push((format!("✗ UI 语言还原失败: {}", e), LogKind::Bad)); fails += 1; }
-                    }
-                }
-                None => out.push(("UI 语言：备份时未读取到，保持原样".into(), LogKind::Info)),
+            // 备份里的 ui_langs 不再还原：本工具已改为不写首选 UI 语言，
+            // 保留字段读取只为兼容旧备份。明确告知，不静默忽略。
+            if b.ui_langs.is_some() {
+                out.push((
+                    "UI 语言：本工具不再改动（如需还原请在 Windows 语言设置里调整）".into(),
+                    LogKind::Info,
+                ));
             }
             match &b.browser_lang {
                 Some(l) => {
-                    let (blog, bfail) = set_browser_language(l);
-                    for line in blog {
-                        let k = if line.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
-                        out.push((line, k));
+                    // 还原同样受浏览器运行限制，否则会被浏览器退出时覆盖
+                    let running = running_browsers();
+                    if running.is_empty() {
+                        let (blog, bfail) = set_browser_language(l);
+                        for line in blog {
+                            let k = if line.starts_with('✗') { LogKind::Bad } else { LogKind::Ok };
+                            out.push((line, k));
+                        }
+                        fails += bfail;
+                    } else {
+                        out.push((
+                            format!("浏览器正在运行（{}），已跳过浏览器语言还原", running.join(", ")),
+                            LogKind::Warn,
+                        ));
+                        out.push((
+                            "请完全退出浏览器后，再点一次「一键恢复」".into(),
+                            LogKind::Warn,
+                        ));
+                        fails += 1;
                     }
-                    fails += bfail;
                 }
                 None => out.push(("浏览器语言：备份时未检测到，保持原样".into(), LogKind::Info)),
             }
@@ -312,11 +339,6 @@ impl App {
             let _ = tx.send(TaskResult::Done { lines: out });
         });
     }
-}
-
-/// 把 "China Standard Time" 缩成 "China" 之类，日志更短
-fn short_tz(tz: &str) -> String {
-    tz.replace(" Standard Time", "").replace(" Time", "")
 }
 
 // ============================================================
@@ -530,6 +552,8 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                 None,
             );
             reading(ui, "浏览器语言", &f.browser_lang, p, None);
+            // 只读展示：让用户亲眼确认界面语言没被动过（曾经会写，现已移除）
+            reading(ui, "界面语言", &f.ui_langs, p, Some(p.fg_mute));
 
             ui.add_space(9.0);
             hairline(ui, p);
@@ -654,48 +678,6 @@ fn exit_card(ui: &mut egui::Ui, app: &mut App, w: f32, key: Profile, p: Palette)
     if resp.clicked() && !app.busy {
         app.switch_to(key);
     }
-}
-
-/// 目标时区相对北京的偏移小时数
-/// 目标时区相对 UTC 的偏移小时数（含 DST）。
-/// 用 chrono 按目标时区规则现算，不用固定值 —— 固定值在冬令时会差 1 小时，
-/// 时钟对照条就成了错的。时区 ID 与 Windows 的对应关系见 tz_rule。
-fn target_utc_offset(key: Profile) -> chrono::FixedOffset {
-    let now = chrono::Utc::now();
-    let rule = match key {
-        Profile::Singapore | Profile::Taipei | Profile::Shanghai => (8, 0), // 无 DST
-        Profile::Tokyo => (9, 0),                                           // 无 DST
-        Profile::California | Profile::NewYork => (0, 0),                    // 由 dst 标志决定
-    };
-    let base = chrono::FixedOffset::east_opt(rule.0 * 3600 + rule.1 * 60).unwrap();
-
-    if matches!(key, Profile::California | Profile::NewYork) {
-        // 北美 DST: 3 月第二个周日 02:00 ~ 11 月第一个周日 02:00 (当地时间)
-        let is_dst = north_america_dst(now);
-        let hours = match key {
-            Profile::California => if is_dst { -7 } else { -8 },
-            Profile::NewYork => if is_dst { -4 } else { -5 },
-            _ => unreachable!(),
-        };
-        return chrono::FixedOffset::east_opt(hours * 3600).unwrap();
-    }
-    base
-}
-
-/// 判断给定 UTC 时刻是否处于北美夏令时
-fn north_america_dst(utc: chrono::DateTime<chrono::Utc>) -> bool {
-    use chrono::{Datelike, TimeZone, Weekday};
-    let y = utc.year();
-    // 3 月第二个周日 / 11 月第一个周日，按 UTC 07:00/06:00 折算当地 02:00
-    let nth_weekday = |month: u32, nth: u32| -> chrono::DateTime<chrono::Utc> {
-        let mut d = chrono::NaiveDate::from_ymd_opt(y, month, 1).unwrap();
-        while d.weekday() != Weekday::Sun {
-            d = d.succ_opt().unwrap();
-        }
-        d += chrono::Duration::days(7 * (nth - 1) as i64);
-        chrono::Utc.from_utc_datetime(&d.and_hms_opt(2, 0, 0).unwrap())
-    };
-    utc >= nth_weekday(3, 2) && utc < nth_weekday(11, 1)
 }
 
 fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
