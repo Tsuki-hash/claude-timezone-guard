@@ -48,9 +48,10 @@
 
 ## 🚀 快速开始
 
-> **本仓库不提供预编译的 exe。** 这是个要读你注册表和浏览器配置的程序，请从源码构建，
-> 或用发布页给出的 SHA256 核对二进制（见 [从源码构建](#-从源码构建)）。
-> 下面的 `.\claude-fingerprint.exe` 指打包/构建后的产物。
+> **获取程序**：从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases)
+> 下载预编译的 `claude-fingerprint.exe`，或[从源码构建](#-从源码构建)。
+> 下载后建议先用 `Get-FileHash` 核对 Release 里给出的 SHA256。
+> 下面的 `.\claude-fingerprint.exe` 即该产物。
 
 ```powershell
 # 1. 体检（只读，不改任何设置）
@@ -209,8 +210,8 @@ cargo build --release     # 产物: rust\target\release\claude-fingerprint.exe
 写入 SHA256SUMS → 自检有无本机路径残留。**测试不通过或产物落后于源码时会拒绝打包。**
 
 > **为什么不把 exe 提交进仓库**：二进制无法审计，而这是个要读你注册表和浏览器配置的程序。
-> 请从源码构建，或从**发布页（Releases）** 下载并核对那里给出的 SHA256。
-> 目前仓库尚未发布任何 Release，所以现阶段请自行构建。
+> 请从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases) 下载并核对
+> 那里给出的 SHA256，或自行从源码构建。
 
 ## 🧪 已知局限
 

@@ -22,6 +22,23 @@ Windows 桌面小工具：一键切换**系统时区**（附区域格式、浏�
 
 ## ⚡ 30 秒上手
 
+**方式一：下载预编译版**
+
+从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases) 下载
+`claude-fingerprint.exe`，建议先用 `Get-FileHash` 核对那里给出的 SHA256：
+
+```powershell
+Get-FileHash .\claude-fingerprint.exe -Algorithm SHA256
+
+.\claude-fingerprint.exe status                 # 只看状态，不改任何设置
+.\claude-fingerprint.exe apply singapore        # 切换到新加坡（UTC+8，时钟零差异）
+.\claude-fingerprint.exe restore                # 还原
+```
+
+不带参数运行即启动图形界面；双击 `claude-fingerprint.exe` 效果相同。
+
+**方式二：从源码构建**
+
 ```powershell
 cd rust
 cargo build --release
@@ -36,23 +53,18 @@ cargo build --release
 .\target\release\claude-fingerprint.exe restore
 ```
 
-不带参数运行即启动图形界面：
-
-```powershell
-.\target\release\claude-fingerprint.exe
-```
-
 ## 🗂️ 目录结构
 
 ```
-rust/            源码（Rust 版，唯一在维护的实现）
+rust/            源码（唯一在维护的实现）
   src/core.rs      时区 / 区域语言 / 注册表 / 进程探测
   src/browser.rs   浏览器 Preferences 读写 + 备份还原
   src/ui.rs        egui 界面与主题
-  src/main.rs      CLI 入口与程序启动
+  src/main.rs      命令行入口与程序启动
   README.md        使用手册（完整版）
   package.ps1      打包成可分发目录
-dist/            打包输出（.exe 不入库，请从源码构建）
+docs/            项目进度与已知问题记录
+dist/            本地打包输出（不入库；发布产物见 Releases）
 ```
 
 ## ⚠️ 先看能力边界
