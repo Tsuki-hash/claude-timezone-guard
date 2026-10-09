@@ -1,0 +1,20 @@
+[package]
+name = "claude-fingerprint"
+version = "1.0.0"
+edition = "2021"
+description = "Claude 指纹切换器 - 一键切换系统时区 / 区域语言 / 浏览器语言"
+
+[dependencies]
+egui = "0.31"
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts"] }
+winreg = "0.52"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+# 不用 panic="abort"：后台线程 panic 时让进程能展开并给出错误，而不是无声闪退
+strip = true

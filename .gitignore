@@ -1,0 +1,10 @@
+# Rust 构建产物
+/rust/target/
+
+# 打包出的二进制：请从源码构建，见 README「从源码构建」
+# （入库存二进制无法审计，且会让仓库膨胀到每次 release 都翻倍）
+/dist/*.exe
+
+# 本工具运行时产生的备份 / 偏好（不应入库）
+backup.json
+theme.txt
