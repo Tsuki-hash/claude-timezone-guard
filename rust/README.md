@@ -3,8 +3,6 @@
 > 依据 https://ip.net.coffee/claude/timezone.html 的分析：Claude Code 疑似读取**系统时区**判断用户所在地，`Asia/Shanghai` / `Asia/Urumqi` 是被点名的高风险特征。
 >
 > **本文档描述的是 Rust 版。** 历史上还有一版 PowerShell 实现，已完全被 Rust 版取代，本文不再描述它。
->
-> 项目的全面评审记录（发现的问题、修复方式、未处理项）见 [`docs/评审报告.md`](../docs/评审报告.md)。
 
 ## ⚠️ 先读这段：它到底能解决什么，不能解决什么
 

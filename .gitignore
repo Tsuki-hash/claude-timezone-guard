@@ -8,3 +8,7 @@
 # 本工具运行时产生的备份 / 偏好（不应入库）
 backup.json
 theme.txt
+
+# 内部评审记录与本地工具数据只留本地，不入公开仓库
+/docs/
+/.workbuddy/

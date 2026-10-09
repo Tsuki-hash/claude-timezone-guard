@@ -105,16 +105,14 @@ start "" "%~dp0claude-fingerprint.exe"
 Set-Content -Path (Join-Path $outFull '启动指纹切换器.bat') -Value $bat -Encoding utf8
 
 # 说明：只认 rust\README.md。复制时把指向仓库根的相对链接改写成 dist 内的实际文件，
-# 否则分发出去的手册里 [MIT](../LICENSE) 是个死链。
+# 否则分发出去的手册里 [MIT](../LICENSE) 是个死链。评审报告只留本地、不入库，
+# rust\README.md 不再引用它，这里也就不需要改写规则。
 $readme = Join-Path $rust 'README.md'
 if (Test-Path $readme) {
     $md = Get-Content $readme -Raw -Encoding UTF8
     # 分发目录里的手册不能引用仓库内的相对路径，否则全是死链。
-    # 许可原文就在同目录；评审报告不在 dist 里，改成指向仓库地址。
     $md = $md -replace '\]\(\.\./LICENSE\)', '](LICENSE)'
     $md = $md -replace '\]\(\.\./THIRD-PARTY-LICENSES\.md\)', '](THIRD-PARTY-LICENSES.md)'
-    $md = $md -replace '\[`docs/评审报告\.md`\]\(\.\./docs/评审报告\.md\)',
-        '[`docs/评审报告.md`](https://github.com/Tsuki-hash/claude-timezone-guard/blob/main/docs/%E8%AF%84%E5%AE%A1%E6%8A%A5%E5%91%8A.md)'
     Set-Content -Path (Join-Path $outFull 'README.md') -Value $md -Encoding UTF8 -NoNewline
 } else {
     Write-Host "⚠ 未找到 $readme，dist 里将没有使用手册" -ForegroundColor Yellow
