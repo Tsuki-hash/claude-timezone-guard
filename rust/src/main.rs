@@ -96,7 +96,7 @@ fn setup_fonts(ctx: &egui::Context) {
 }
 
 /// 窗口任务栏图标：与 exe 资源图标同一张图（assets/icon.rgba，64×64 裸 RGBA，
-/// 由 assets/icon_gen.py 生成）。不设的话 eframe 会用自带的 "e" 默认图标。
+/// 由 assets/icon-source.png 生成；icon_gen.py 生成器已废弃）。
 fn window_icon() -> egui::IconData {
     egui::IconData {
         rgba: include_bytes!("../assets/icon.rgba").to_vec(),

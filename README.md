@@ -23,7 +23,8 @@ Windows 桌面小工具：一键切换**系统时区**（附区域格式、浏�
 **方式一：下载预编译版**
 
 从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases) 下载
-`claude-fingerprint.exe`，建议先用 `Get-FileHash` 核对那里给出的 SHA256：
+`claude-fingerprint.exe`（本项目按约定不在 Release 附 SHA256 文件，介意校验的话
+下载后自行 `Get-FileHash` 留档）：
 
 ```powershell
 Get-FileHash .\claude-fingerprint.exe -Algorithm SHA256
@@ -85,7 +86,7 @@ dist/            本地打包输出（不入库；发布产物见 Releases）
 | --- | --- | --- |
 | 中转地址（`ANTHROPIC_BASE_URL`） | 32 | 检测但不代改：改环境变量/配置文件即可归零 |
 | 系统时区 | 30 | ✅ 本工具可修（大陆时区满分；港澳 60%；Taipei 等不计分） |
-| 字体环境残留 | 18 | 检测但不可修：国产厂商字体 / 非标配中文字体的存在性 |
+| 字体环境残留 | 18 | 检测但不可修：国产厂商字体 / 非标配中文字体的存在性（按特征名单计） |
 | 区域格式 | 10 | ✅ 本工具可修（zh-Hans 1.0 / 港澳繁体 0.5 / zh-TW 0） |
 | NTP 校时服务器 | 5 | 检测但不可修：国内校时服务器会暴露真实时区 |
 | 国产浏览器已装 | 5 | 半可修：卸载或避免日常使用（工具不代劳） |

@@ -1,9 +1,11 @@
 //! UI 层：egui 界面 + 主题
-//! 设计方向：「网络监控仪表盘」—— 工具本质是检测/修改系统指纹，
-//! 美学取自网络诊断仪器（示波器、链路监控台），而非通用设置面板。
+//! 设计方向：「明亮工作台」卡片仪表盘 —— 纯白卡片浮在蓝灰底上，大号彩色数字
+//! 做唯一视觉重心，状态胶囊与迷你数据瓦片组织信息；视觉语言对齐参考项目
+//! DeepSeekMonitorWindows，细节见 Palette 与 draw_hero。
 //!
-//! 签名元素：时区对照条 —— 一条横向时间轴同时显示北京/当前/目标时区，
-//! 把「时钟零差异」这件抽象的事变成看得见的刻度。
+//! 结构：两级页面 —— 主页（hero 风险卡 / 本机指纹读数卡 / 切换出口 / 日志）+
+//! 详情页（完整读数 / 待处理清单 / 日志）；布局四边由无头回归测试守护
+//! （layout_tests，窗口尺寸常量 WINDOW_SIZE 与 main.rs 共用）。
 
 use crate::browser::{
     backup_state, load_backup, restore_browser_langs, save_backup, set_browser_language,
@@ -740,18 +742,16 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
                         app.refresh_fingerprint();
                     }
                     ui.add_space(4.0);
-                    let (label, hover) = match app.theme {
-                        Theme::Dark => ("浅色", "切换到浅色主题"),
-                        Theme::Light => ("深色", "切换到深色主题"),
+                    // 主题切换：现画太阳/月亮（评审 2-10——文字按钮与整体
+                    // 图标语言不齐）。图标表示点击后去往的主题。
+                    let to_dark = app.theme == Theme::Light;
+                    let tip = if to_dark {
+                        "切换到深色主题"
+                    } else {
+                        "切换到浅色主题"
                     };
-                    let btn =
-                        egui::Button::new(egui::RichText::new(label).color(p.fg_dim).size(11.0))
-                            .fill(p.panel)
-                            .stroke(egui::Stroke::new(1.0_f32, p.line))
-                            .corner_radius(6.0);
-                    if ui
-                        .add_sized([46.0, 22.0], btn)
-                        .on_hover_text(hover)
+                    if theme_icon_button(ui, p, to_dark)
+                        .on_hover_text(tip)
                         .clicked()
                     {
                         app.theme = match app.theme {
@@ -763,6 +763,35 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
                 });
             });
         });
+}
+
+/// 主题切换图标按钮：浅色→月亮，深色→太阳。画笔现画，与窗口控制按钮同款交互。
+fn theme_icon_button(ui: &mut egui::Ui, p: Palette, to_dark: bool) -> egui::Response {
+    let btn = egui::Button::new("")
+        .min_size(egui::vec2(24.0, 22.0))
+        .fill(p.panel)
+        .stroke(egui::Stroke::new(1.0_f32, p.line))
+        .corner_radius(5.0);
+    let resp = ui.add(btn);
+    let rect = resp.rect;
+    let painter = ui.painter_at(rect);
+    let c = rect.center();
+    let ink = p.fg_dim;
+    let stroke = egui::Stroke::new(1.2_f32, ink);
+    if to_dark {
+        // 月亮：满圆被按钮底色圆遮出月牙
+        painter.circle_filled(c, 5.5, ink);
+        painter.circle_filled(c + egui::vec2(3.0, -2.0), 4.8, p.panel);
+    } else {
+        // 太阳：圆心 + 8 条射线
+        painter.circle_filled(c, 3.6, ink);
+        for i in 0..8 {
+            let a = i as f32 * std::f32::consts::TAU / 8.0;
+            let dir = egui::vec2(a.cos(), a.sin());
+            painter.line_segment([c + dir * 5.2, c + dir * 7.2], stroke);
+        }
+    }
+    resp
 }
 
 /// 窗口控制图标（最小化 / 最大化 / 还原 / 关闭）
@@ -1835,50 +1864,41 @@ fn hairline(ui: &mut egui::Ui, p: Palette) {
 mod layout_tests {
     use super::*;
 
-    /// 主页内容右边缘不得超出窗口内边界（CentralPanel 右侧 14px 边距内）。
-    /// 用无头 egui 真实走一遍布局，量出实际右边缘。
-    #[test]
-    fn 主页布局右边缘不溢出() {
-        let (win_w, win_h) = (WINDOW_SIZE[0], WINDOW_SIZE[1]);
-        let ctx = egui::Context::default();
-        let raw = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(win_w, win_h),
-            )),
-            ..Default::default()
-        };
-        let mut app = App::new();
-        let inner_right = win_w - 14.0;
-        let inner_bottom = win_h - 12.0;
-        let mut edges: Vec<(&str, f32, f32)> = Vec::new();
+    /// 走一遍主页布局，收集各分区 (名称, 右边缘, 底边缘)。
+    fn run_home_layout(
+        ctx: &egui::Context,
+        app: &mut App,
+        edges: &mut Vec<(&'static str, f32, f32)>,
+    ) {
+        let p = Palette::for_theme(app.theme);
+        draw_titlebar(ctx, app, p);
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::central_panel(&ctx.style())
+                    .fill(p.bg)
+                    .inner_margin(egui::Margin::symmetric(14, 12)),
+            )
+            .show(ctx, |ui| match app.page {
+                Page::Home => {
+                    draw_hero(ui, app, p);
+                    edges.push(("hero 卡", ui.min_rect().right(), ui.min_rect().bottom()));
+                    draw_readings(ui, app, p);
+                    edges.push(("readings 卡", ui.min_rect().right(), ui.min_rect().bottom()));
+                    draw_exits(ui, app, p);
+                    edges.push(("exits 区", ui.min_rect().right(), ui.min_rect().bottom()));
+                    draw_latest_log(ui, app, p);
+                    edges.push(("日志行", ui.min_rect().right(), ui.min_rect().bottom()));
+                }
+                Page::Detail => {}
+            });
+    }
 
-        let _ = ctx.run(raw, |ctx| {
-            let p = Palette::for_theme(app.theme);
-            draw_titlebar(ctx, &mut app, p);
-            egui::CentralPanel::default()
-                .frame(
-                    egui::Frame::central_panel(&ctx.style())
-                        .fill(p.bg)
-                        .inner_margin(egui::Margin::symmetric(14, 12)),
-                )
-                .show(ctx, |ui| match app.page {
-                    Page::Home => {
-                        draw_hero(ui, &mut app, p);
-                        edges.push(("hero 卡", ui.min_rect().right(), ui.min_rect().bottom()));
-                        draw_readings(ui, &mut app, p);
-                        edges.push(("readings 卡", ui.min_rect().right(), ui.min_rect().bottom()));
-                        draw_exits(ui, &mut app, p);
-                        edges.push(("exits 区", ui.min_rect().right(), ui.min_rect().bottom()));
-                        draw_latest_log(ui, &mut app, p);
-                        edges.push(("日志行", ui.min_rect().right(), ui.min_rect().bottom()));
-                    }
-                    Page::Detail => {}
-                });
-        });
-
-        // 每个分区的右/下边缘都必须落在窗口内边界以内（0.5px 容差）
-        for (name, right, bottom) in &edges {
+    fn assert_edges_in_bounds(
+        edges: &[(&'static str, f32, f32)],
+        inner_right: f32,
+        inner_bottom: f32,
+    ) {
+        for (name, right, bottom) in edges {
             assert!(
                 *right <= inner_right + 0.5,
                 "{name} 右边缘 {right:.1} 超出内边界 {inner_right:.1}——布局溢出会把内容截断在窗口外"
@@ -1888,9 +1908,58 @@ mod layout_tests {
                 "{name} 底边缘 {bottom:.1} 超出内边界 {inner_bottom:.1}——窗口高度不足以容纳主页内容（WINDOW_SIZE 需调大或布局需收紧）"
             );
         }
+    }
+
+    /// 主页布局四边不溢出，两种极端指纹都要守住：
+    ///   pass1 = 本机真实指纹（通常零命中或少量命中）；
+    ///   pass2 = 合成极端态（10 个字体命中 + 已完成的出口侧查询 + 全部风险命中）——
+    /// 评审 2-1 的教训：布局测试曾只跑"未查询"状态，查询完成后的换行把
+    /// 日志行推出窗口底而测试毫无察觉。
+    #[test]
+    fn 主页布局边缘不溢出() {
+        let (win_w, win_h) = (WINDOW_SIZE[0], WINDOW_SIZE[1]);
+        let inner_right = win_w - 14.0;
+        let inner_bottom = win_h - 12.0;
+        let make_input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(win_w, win_h),
+            )),
+            ..Default::default()
+        };
+
+        // pass1：真实指纹
+        let ctx = egui::Context::default();
+        let mut app = App::new();
+        let mut edges: Vec<(&'static str, f32, f32)> = Vec::new();
+        let _ = ctx.run(make_input(), |ctx| {
+            run_home_layout(ctx, &mut app, &mut edges)
+        });
+        assert_edges_in_bounds(&edges, inner_right, inner_bottom);
+
+        // pass2：合成极端态
+        app.fp.fonts_vendor = (0..10).map(|i| format!("Vendor Font {i}")).collect();
+        app.fp.fonts_extra = (0..6).map(|i| format!("Extra CN Font {i}")).collect();
+        app.fp.cn_browsers = vec!["360安全浏览器".into(), "夸克浏览器".into()];
+        app.fp.culture = "zh-CN".into();
+        app.remote = Some(Ok(RemoteEstimate {
+            score: 31,
+            band: "medium".into(),
+            verdict: "中等风险".into(),
+            message: String::new(),
+            geo_country: Some("US".into()),
+            geo_tz: Some("America/Denver".into()),
+            measured_weight: 62,
+            total_weight: 100,
+        }));
+        let mut edges2: Vec<(&'static str, f32, f32)> = Vec::new();
+        let _ = ctx.run(make_input(), |ctx| {
+            run_home_layout(ctx, &mut app, &mut edges2)
+        });
+        assert_edges_in_bounds(&edges2, inner_right, inner_bottom);
         println!(
-            "[layout] 内容底边: {:.1} / 内边界 {inner_bottom:.1}",
-            edges[3].2
+            "[layout] 极端态内容底边: {:.1} / 内边界 {inner_bottom:.1}",
+            edges2[3].2
         );
     }
 }
