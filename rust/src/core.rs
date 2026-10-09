@@ -363,20 +363,55 @@ fn host_of(v: &str) -> Option<String> {
     }
 }
 
-/// 读取 ANTHROPIC_BASE_URL 的生效值。
+/// 读取 ANTHROPIC_BASE_URL 的生效值与来源。
 ///
-/// 两个来源（只查环境变量会漏报）：
+/// 两个来源（只查环境变量会漏报），按实际优先级排列：
 ///   1. 环境变量（进程级，最直接）
 ///   2. `~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL` —— Claude Code
 ///      支持在设置文件里注入环境变量，那种配置不会出现在本进程的环境块里。
 ///      实测这是最常见的配置方式（本机就是这一种）。
-pub fn read_base_url() -> Option<String> {
+///
+/// 值与来源**必须出自同一次判定**：早先 `read_base_url` 优先 env、
+/// `base_url_hint` 却独立地优先查 settings.json —— 两者同时设置时，展示的值
+/// 来自 env，提示却让用户去改 settings.json，改了也不生效。
+///
+/// 返回值统一过 `redact_url_userinfo`：两个来源都可能被用户拼进 token，
+/// 凡展示一律打码（此前只拦 settings 路径，env 路径是漏的 —— 会把
+/// `https://token@relay/...` 里的 token 明文打到屏幕上）。
+pub fn read_base_url_with_source() -> (Option<String>, String) {
     if let Ok(v) = std::env::var("ANTHROPIC_BASE_URL") {
-        if !v.trim().is_empty() {
-            return Some(v);
+        let v = v.trim();
+        if !v.is_empty() {
+            return (
+                Some(redact_url_userinfo(v)),
+                "环境变量 ANTHROPIC_BASE_URL".to_string(),
+            );
         }
     }
-    read_base_url_from_settings()
+    if let Some(p) = base_url_settings_path() {
+        let Ok(txt) = std::fs::read_to_string(&p) else {
+            return (None, String::new());
+        };
+        let s = serde_json::from_str::<serde_json::Value>(&txt)
+            .ok()
+            .and_then(|v| {
+                v.get("env")?
+                    .get("ANTHROPIC_BASE_URL")?
+                    .as_str()
+                    .map(|s| s.trim().to_string())
+            })
+            .unwrap_or_default();
+        if !s.is_empty() {
+            return (Some(redact_url_userinfo(&s)), p.display().to_string());
+        }
+    }
+    (None, String::new())
+}
+
+/// 读取 ANTHROPIC_BASE_URL 的生效值（已打码）。来源判定见
+/// `read_base_url_with_source`。
+pub fn read_base_url() -> Option<String> {
+    read_base_url_with_source().0
 }
 
 /// 找到设置了 ANTHROPIC_BASE_URL 的那个文件（仅用于告诉用户"改哪里"）
@@ -401,26 +436,6 @@ pub fn base_url_settings_path() -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn read_base_url_from_settings() -> Option<String> {
-    let p = base_url_settings_path()?;
-    let txt = std::fs::read_to_string(&p).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
-    let s = v
-        .get("env")?
-        .get("ANTHROPIC_BASE_URL")?
-        .as_str()?
-        .trim()
-        .to_string();
-    if s.is_empty() {
-        None
-    } else {
-        // 过一遍打码函数：base_url 理论上不含密钥，但它是从**同时存放密钥的文件**
-        // 里读出来的，万一用户把 token 拼进了 URL（`https://token@relay/...`），
-        // 这里就是唯一能拦住它被打印到屏幕上的地方。
-        Some(redact_url_userinfo(&s))
-    }
 }
 
 /// 去掉 URL 里的 `user:pass@` 部分（可以含密钥），其余原样保留。
@@ -450,11 +465,14 @@ pub fn redact_secret(v: &str) -> String {
     format!("{}…(已打码，共 {} 字符)", head, n)
 }
 
-/// 告诉用户"这个值是从哪读到的"，方便他自己去改
+/// 告诉用户"这个值是从哪读到的"，方便他自己去改。
+/// 与 `read_base_url` 共用同一次来源判定（一致性原因见该函数注释）。
 pub fn base_url_hint() -> String {
-    match base_url_settings_path() {
-        Some(p) => format!("来源: {}", p.display()),
-        None => "来源: 环境变量 ANTHROPIC_BASE_URL".into(),
+    let (_, src) = read_base_url_with_source();
+    if src.is_empty() {
+        "来源: 环境变量 ANTHROPIC_BASE_URL".into()
+    } else {
+        format!("来源: {}", src)
     }
 }
 
@@ -497,10 +515,11 @@ pub fn ntp_looks_domestic(server: &str) -> bool {
         "ntp.ntsc.ac.cn",
         "time.edu.cn",
     ];
-    CN_SUFFIXES.iter().any(|suf| {
-        // 后缀匹配必须落在标签边界上，避免 "evilcn.com" 命中 ".cn"
-        s.ends_with(suf) || s.contains(&format!(".{}", suf.trim_start_matches('.')))
-    })
+    // 只做 ends_with：条目要么自带前导点（".cn"），要么是完整域
+    // （"aliyun.com"），ends_with 天然落在标签边界上，"evilcn.com" 不会命中。
+    // 早先还有一个 contains 分支，会让 "foo.cn.evil.com"、"aliyun.com.evil.com"
+    // 这类"后缀出现在中间"的无关域名被误判为国内 —— 纯误报，已删。
+    CN_SUFFIXES.iter().any(|suf| s.ends_with(suf))
 }
 
 /// 判定当前 NTP 配置是否构成风险：没配 NTP（None）不算；配了国内地址才算。
@@ -1089,10 +1108,12 @@ mod tests {
 
     #[test]
     fn 打码后不再包含原文() {
-        let secret = "sk-7EXAMPLE-REDACTED-000000";
+        // 刻意用一眼假的占位符：密钥样例会随公开仓库/二进制分发（GUI 里还有一处），
+        // 不能长得像真实 key
+        let secret = "sk-EXAMPLE-0000000000000000000000";
         let masked = redact_secret(secret);
         assert!(!masked.contains(secret), "打码后仍含完整密钥");
-        assert!(masked.contains("sk-7"), "应保留少量可识别前缀");
+        assert!(masked.contains("sk-E"), "应保留少量可识别前缀");
         assert!(masked.contains(&secret.chars().count().to_string()));
     }
 
@@ -1158,6 +1179,18 @@ mod tests {
             "cname.example.com",
         ] {
             assert!(!ntp_looks_domestic(ok), "国外 NTP 被误判: {:?}", ok);
+        }
+    }
+
+    #[test]
+    fn ntp_后缀出现在中间的域名不误判() {
+        // 回归防护：早先的 contains 分支会把"后缀出现在中间"的域名判成国内
+        for ok in [
+            "foo.cn.evil.com",
+            "aliyun.com.evil.com",
+            "tencent.com.evil.com",
+        ] {
+            assert!(!ntp_looks_domestic(ok), "被误判为国内: {:?}", ok);
         }
     }
 
