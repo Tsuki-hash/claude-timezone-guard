@@ -16,3 +16,5 @@
 *.exe  binary
 *.ico  binary
 *.png  binary
+*.rgba binary
+*.py   text eol=lf

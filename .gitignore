@@ -12,3 +12,4 @@ theme.txt
 # 内部评审记录与本地工具数据只留本地，不入公开仓库
 /docs/
 /.workbuddy/
+/ico/

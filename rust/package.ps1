@@ -80,6 +80,35 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 
+# --- 本机代码签名：让 SmartScreen 不拦自己构建的 exe -------------------
+# exe 无签名时，Windows 每次重构建（哈希变化、信誉归零）都可能弹
+# "已保护你的电脑"。用本机自签证书（CN=ClaudeFingerprint Dev）签名；
+# 证书已导入 CurrentUser\Root 与 TrustedPeople，本机认这个发布者。
+# 注意：自签只对本机有效，分发给别人的版本仍会弹 —— 那需要真正的代码签名证书。
+# 证书创建/导入脚本：rust\setup-signing.ps1（含根信任导入）。
+$signCert = Get-ChildItem Cert:\CurrentUser\My |
+    Where-Object { $_.Subject -match 'ClaudeFingerprint' -and $_.HasPrivateKey } |
+    Select-Object -First 1
+if ($signCert) {
+    # 优先 signtool（SDK 自带），没有则退回 Set-AuthenticodeSignature
+    $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match 'x64' } |
+        Select-Object -ExpandProperty FullName -First 1
+    if ($signtool) {
+        & $signtool sign /fd SHA256 /n 'ClaudeFingerprint Dev' $exe | Out-Null
+    } else {
+        Set-AuthenticodeSignature -FilePath $exe -Certificate $signCert | Out-Null
+    }
+    $sig = Get-AuthenticodeSignature $exe
+    if ($sig.Status -eq 'Valid') {
+        Write-Host "  ✓ 已代码签名（验证通过）" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  ⚠ 签名未通过验证: $($sig.Status) $($sig.StatusMessage)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  ⚠ 未找到签名证书（运行 rust\setup-signing.ps1 创建），SmartScreen 可能拦截" -ForegroundColor Yellow
+}
+
 # --- 新鲜度校验：产物不得落后于源码 -----------------------------------
 $exeTime = (Get-Item $exe).LastWriteTimeUtc
 $newer = Get-ChildItem (Join-Path $rust 'src') -Filter *.rs -File |

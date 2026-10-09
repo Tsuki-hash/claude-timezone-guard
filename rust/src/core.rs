@@ -180,7 +180,6 @@ pub fn north_america_dst(utc: chrono::DateTime<chrono::Utc>) -> bool {
 #[derive(Clone, Debug)]
 pub struct Fingerprint {
     pub tz_id: String,
-    pub is_china_tz: bool,
     pub now: String,
     pub culture: String,
     pub sys_locale: String,
@@ -201,6 +200,38 @@ pub struct Fingerprint {
     pub ntp_server: Option<String>,
     /// NTP 是否看起来是国内的（= 校时会泄露真实时区）
     pub ntp_leaks: bool,
+    /// 命中的国产厂商字体名（token，如 "MiSans"、"方正舒体"）
+    pub fonts_vendor: Vec<String>,
+    /// 命中的非标配中文字体（Windows 标配不含：思源/文泉驿/苹方等）
+    pub fonts_extra: Vec<String>,
+    /// 已安装的国产浏览器显示名
+    pub cn_browsers: Vec<String>,
+}
+
+/// 时区风险档位。情报（FuckClaude issue #11）：Claude 被证实读取的时区只有
+/// `Asia/Shanghai` / `Asia/Urumqi`；Asia/Taipei 完全不触发；港澳属受限地区记部分分。
+/// Windows 把北京/香港/澳门并进同一个 "China Standard Time"，
+/// 因此用 Geo Nation（本机已读的 geo_id）区分：CN=45、HK=133、MO=140。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TzTier {
+    /// 中国大陆时区（满分风险）
+    Full,
+    /// 港澳时区（同一 Windows 时区名 + 港澳 Geo，部分风险 60%）
+    Partial,
+    /// 其他时区（Taipei / Singapore / Tokyo …，零风险）
+    None,
+}
+
+impl Fingerprint {
+    pub fn tz_tier(&self) -> TzTier {
+        if self.tz_id != "China Standard Time" {
+            return TzTier::None;
+        }
+        match self.geo_id.as_str() {
+            "133" | "140" => TzTier::Partial, // GeoID: Hong Kong / Macao
+            _ => TzTier::Full,                // CN（GeoID 45）与未知 Geo 都按大陆口径从重
+        }
+    }
 }
 
 pub fn read_fingerprint() -> Fingerprint {
@@ -209,9 +240,13 @@ pub fn read_fingerprint() -> Fingerprint {
     let browser_lang = crate::browser::read_chrome_lang().unwrap_or_else(|| "未检测到".into());
     let base_url = read_base_url();
     let (ntp_leaks, _) = ntp_risk(get_ntp_server().as_deref());
+    // 字体与浏览器枚举走注册表，一次读全并缓存进画像（UI 每秒重绘不重复枚举）
+    let font_names = installed_font_names();
+    let fonts_vendor = match_font_tokens(&font_names, VENDOR_FONT_TOKENS);
+    let fonts_extra = match_font_tokens(&font_names, EXTRA_CN_FONT_TOKENS);
+    let cn_browsers = detect_cn_browsers();
 
     Fingerprint {
-        is_china_tz: tz_id == "China Standard Time",
         tz_id,
         now: chrono::Local::now()
             .format("%Y-%m-%d %H:%M:%S %:z")
@@ -238,17 +273,22 @@ pub fn read_fingerprint() -> Fingerprint {
         base_url_hint: base_url_hint(),
         ntp_server: get_ntp_server(),
         ntp_leaks,
+        fonts_vendor,
+        fonts_extra,
+        cn_browsers,
     }
 }
 
 /// 指纹风险评分。
 ///
-/// 分母 100，覆盖四条本工具**能观察到**的本地特征路径：
-///   时区 35 + 代理中转地址(ANTHROPIC_BASE_URL) 40 + 区域格式 15 + 直连 NTP 10
+/// 分母 100，覆盖六条本工具**能观察到**的特征路径：
+///   中转地址(ANTHROPIC_BASE_URL) 32 + 时区 30 + 字体环境残留 18 +
+///   区域格式 10 + 直连 NTP 5 + 国产浏览器已装 5
 ///
-/// 为什么把 BASE_URL 给到最高的 40：原文点名的两条与出口 IP 无关的路径里，
-/// 它是最直接的一条 —— 指向中转站等于自己报出用了什么服务，而且它比时区
-/// **更容易修**（改一个环境变量即可）。
+/// 中转地址仍是最高的单项：指向中转站等于自己报出用了什么服务，且它比时区
+/// **更容易修**（改一个环境变量即可）。时区第二：被证实读取的时区只有
+/// Shanghai/Urumqi；港澳属受限地区按 60% 计；Taipei 不触发（FuckClaude issue #11）。
+/// 字体环境与国产浏览器是「不可修/半可修」的环境残留，权重如实但不封顶单项。
 ///
 /// ACP(系统代码页) 与 Nation(区域位置) 仍不计入：前者要管理员+重启才能改，
 /// 计进去会让分数永远降不到 0，与界面上的结论自相矛盾。
@@ -259,11 +299,10 @@ pub fn risk_score(f: &Fingerprint) -> (u32, &'static str) {
     let s: u32 = f
         .risk_items()
         .iter()
-        .filter(|i| i.tripped)
-        .map(|i| i.weight)
+        .map(|i| (i.weight as f32 * i.score).round() as u32)
         .sum();
 
-    // 阈值按新分母重新标定：单项最高 40，最严重组合（时区+中转）= 75
+    // 阈值：最严重组合（时区+中转）= 62
     let level = if s >= 60 {
         "高危"
     } else if s >= 25 {
@@ -280,32 +319,61 @@ pub fn risk_score(f: &Fingerprint) -> (u32, &'static str) {
 /// 否则将来调整权重时会出现"分数超过分母"或文案对不上。
 pub const RISK_MAX: u32 = 100;
 
-/// 一条可观察的风险项。`tripped` 为真时计入分数。
+/// 一条可观察的风险项。`score` 为 0.0–1.0 的命中程度
+/// （1.0 = 完全命中；港澳时区 0.6；厂商字体单个 0.8），
+/// 贡献分 = weight × score 四舍五入。
 #[derive(Clone, Copy, Debug)]
 pub struct RiskItem {
     pub weight: u32,
-    pub tripped: bool,
+    pub score: f32,
 }
 
 impl Fingerprint {
-    /// 当前命中的风险项（顺序与权重固定，便于界面稳定展示与单测断言）
-    pub fn risk_items(&self) -> [RiskItem; 4] {
+    /// 当前命中的风险项（顺序与权重固定，便于界面稳定展示与单测断言）。
+    /// 六项权重合计 = 100（分母），全部 score=1.0 时得分恰为满分。
+    pub fn risk_items(&self) -> [RiskItem; 6] {
+        let font_score = if self.fonts_vendor.len() >= 2 {
+            1.0
+        } else if self.fonts_vendor.len() == 1 {
+            0.8
+        } else if self.fonts_extra.len() >= 2 {
+            0.5
+        } else {
+            0.0
+        };
+        let tz_score = match self.tz_tier() {
+            TzTier::Full => 1.0,
+            TzTier::Partial => 0.6,
+            TzTier::None => 0.0,
+        };
         [
             RiskItem {
-                weight: 35,
-                tripped: self.is_china_tz,
+                weight: 32,
+                score: if self.proxy_like_base_url { 1.0 } else { 0.0 },
             },
             RiskItem {
-                weight: 40,
-                tripped: self.proxy_like_base_url,
+                weight: 30,
+                score: tz_score,
             },
             RiskItem {
-                weight: 15,
-                tripped: self.culture == "zh-CN",
+                weight: 18,
+                score: font_score,
             },
             RiskItem {
                 weight: 10,
-                tripped: self.ntp_leaks,
+                score: if self.culture == "zh-CN" { 1.0 } else { 0.0 },
+            },
+            RiskItem {
+                weight: 5,
+                score: if self.ntp_leaks { 1.0 } else { 0.0 },
+            },
+            RiskItem {
+                weight: 5,
+                score: if self.cn_browsers.is_empty() {
+                    0.0
+                } else {
+                    1.0
+                },
             },
         ]
     }
@@ -528,6 +596,166 @@ pub fn ntp_risk(server: Option<&str>) -> (bool, String) {
         None => (false, "未配置".into()),
         Some(s) => (ntp_looks_domestic(s), s.to_string()),
     }
+}
+
+// ============================================================
+// 环境残留检测：字体 + 国产浏览器
+// ============================================================
+/// 国产厂商字体 token（小写匹配，注册表/字体名含任一即命中）。
+/// 名单与计分语义对齐 FuckClaude `signals.ts`（MIT）——命中 1 个 0.8、≥2 满分：
+/// 厂商字体几乎只出现在国产设备同步（小米/华为/OPPO/vivo 手机助手）或
+/// 厂商软件安装后，是强「中文环境」信号。
+const VENDOR_FONT_TOKENS: &[&str] = &[
+    "MiSans",           // 小米 HyperOS / MIUI
+    "MIUI",             // 小米旧版
+    "HarmonyOS Sans",   // 华为（含 SC 变体）
+    "HONOR Sans",       // 荣耀
+    "OPPO Sans",        // OPPO / 一加
+    "vivo Sans",        // vivo
+    "Alibaba PuHuiTi",  // 阿里巴巴普惠体
+    "Alibaba Sans",     // 阿里巴巴
+    "DingTalk JinBuTi", // 钉钉进步体
+    "Douyin Sans",      // 字节 / 抖音
+    "HYQiHei",          // 汉仪旗黑（多款国产软件捆绑）
+    "方正舒体",         // 以下四款随 WPS Office 安装
+    "方正楷体",
+    "方正黑体",
+    "方正仿宋",
+    "FZShuSong",
+    "FZKai",
+    "FZHei",
+    "FZFangSong",
+];
+
+/// 非标配中文字体 token：Windows 不自带，出现即说明装过中文设计软件 /
+/// 中文环境（弱信号——FuckClaude 给简体字体 0.75+，但它在 Windows 上把
+/// 标配的雅黑也算进去；我们只认真正「附加安装」的，更精确）。
+const EXTRA_CN_FONT_TOKENS: &[&str] = &[
+    "pingfang", // 苹方（macOS）
+    "苹方",
+    "source han", // 思源
+    "思源黑体",
+    "思源宋体",
+    "noto sans cjk",
+    "noto serif cjk",
+    "wenquanyi", // 文泉驿
+    "文泉驿",
+];
+
+/// 国产浏览器在卸载列表/显示名里的特征（小写匹配）。
+/// 名单用「具体产品名」而不是裸 "360"/"qq"，避免把 360 安全卫士、
+/// QQ 音乐这类非浏览器软件误报进来。
+const CN_BROWSER_TOKENS: &[&str] = &[
+    "360安全浏览器",
+    "360极速浏览器",
+    "360浏览器",
+    "qq浏览器",
+    "qqbrowser",
+    "搜狗高速浏览器",
+    "搜狗浏览器",
+    "uc浏览器",
+    "ucbrowser",
+    "夸克浏览器",
+    "夸克",
+    "百度浏览器",
+    "baidubrowser",
+    "2345",
+    "猎豹安全浏览器",
+    "傲游",
+    "华为浏览器",
+    "小米浏览器",
+    "oppo浏览器",
+    "vivo浏览器",
+    "世界之窗",
+];
+
+/// 枚举已安装字体的注册表显示名（HKLM 全机 + HKCU 当前用户）。
+/// 值名形如 "MiSans Regular (TrueType)" / "方正舒体 (TrueType)"，
+/// 本身就是本地化的字体名，直接做 token 匹配即可——不需要 GDI 枚举。
+fn installed_font_names() -> Vec<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let mut names = Vec::new();
+    for (hive, path) in [
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows NT\CurrentVersion\Fonts",
+        ),
+    ] {
+        let k = winreg::RegKey::predef(hive);
+        let Ok(sub) = k.open_subkey(path) else {
+            continue;
+        };
+        for (name, _value) in sub.enum_values().flatten() {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// 在字体名集合里匹配 token 集合，返回命中的 token（去重、保持名单顺序）。
+fn match_font_tokens(names: &[String], tokens: &[&str]) -> Vec<String> {
+    let lower: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    tokens
+        .iter()
+        .filter(|t| {
+            let t = t.to_lowercase();
+            lower.iter().any(|n| n.contains(&t))
+        })
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// 枚举已安装的国产浏览器（读三处卸载列表的 DisplayName）。
+/// 只读不写；任何键打不开都静默跳过——检测能力不值得报错。
+fn detect_cn_browsers() -> Vec<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let roots = [
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    ];
+    let mut hits: Vec<String> = Vec::new();
+    let mut matched: Vec<String> = Vec::new();
+    for (hive, path) in roots {
+        let k = winreg::RegKey::predef(hive);
+        let Ok(sub) = k.open_subkey(path) else {
+            continue;
+        };
+        for key_name in sub.enum_keys().flatten() {
+            let Ok(entry) = sub.open_subkey(&key_name) else {
+                continue;
+            };
+            let Ok(display) = entry.get_value::<String, _>("DisplayName") else {
+                continue;
+            };
+            let lower = display.to_lowercase();
+            if let Some(t) = CN_BROWSER_TOKENS
+                .iter()
+                .find(|t| lower.contains(&t.to_lowercase()))
+            {
+                // 同一个 token（同一款浏览器）在三个卸载根里重复出现时只记一次
+                if matched.iter().all(|m: &String| m != *t) {
+                    matched.push(t.to_string());
+                    hits.push(display.trim().to_string());
+                }
+            }
+        }
+    }
+    hits.sort();
+    hits
 }
 
 // ============================================================
@@ -977,7 +1205,6 @@ mod tests {
     fn fp(tz: &str, culture: &str) -> Fingerprint {
         Fingerprint {
             tz_id: tz.into(),
-            is_china_tz: tz == "China Standard Time",
             now: String::new(),
             culture: culture.into(),
             sys_locale: String::new(),
@@ -991,14 +1218,17 @@ mod tests {
             base_url_hint: String::new(),
             ntp_server: None,
             ntp_leaks: false,
+            fonts_vendor: Vec::new(),
+            fonts_extra: Vec::new(),
+            cn_browsers: Vec::new(),
         }
     }
 
     #[test]
     fn 风险分_中国大陆全中为高危() {
-        // 时区 35 + 区域格式 15 = 50（没有中转、没有国内 NTP）
+        // 时区 30 + 区域格式 10 = 40（没有中转、没有国内 NTP、字体浏览器干净）
         let (s, l) = risk_score(&fp("China Standard Time", "zh-CN"));
-        assert_eq!((s, l), (50, "中危"));
+        assert_eq!((s, l), (40, "中危"));
     }
 
     #[test]
@@ -1009,20 +1239,37 @@ mod tests {
 
     #[test]
     fn 风险分_只中一项时分级正确() {
-        // 只时区是中国：35
+        // 只时区是中国：30
         assert_eq!(
             risk_score(&fp("China Standard Time", "en-US")),
-            (35, "中危")
+            (30, "中危")
         );
-        // 只区域格式是 zh-CN：15
+        // 只区域格式是 zh-CN：10
         assert_eq!(
             risk_score(&fp("Singapore Standard Time", "zh-CN")),
-            (15, "低危")
+            (10, "低危")
         );
-        // 只 NTP 是国内：10
+        // 只 NTP 是国内：5
         let mut ntp_only = fp("Singapore Standard Time", "en-SG");
         ntp_only.ntp_leaks = true;
-        assert_eq!(risk_score(&ntp_only), (10, "低危"));
+        assert_eq!(risk_score(&ntp_only), (5, "低危"));
+    }
+
+    #[test]
+    fn 风险分_港澳时区记部分风险() {
+        // 情报：港澳属受限地区（60%），台湾不计分
+        // Windows 把北京/香港/澳门并进同一个时区名，用 Geo Nation 区分
+        let mut hk = fp("China Standard Time", "en-US");
+        hk.geo_id = "133".into(); // Hong Kong GeoID
+        assert_eq!(risk_score(&hk), (18, "低危")); // 30 × 0.6
+        let mut mo = fp("China Standard Time", "en-US");
+        mo.geo_id = "140".into(); // Macao GeoID
+        assert_eq!(risk_score(&mo), (18, "低危"));
+        // Taipei：Anthropic 完全支持，零分
+        assert_eq!(
+            risk_score(&fp("Taipei Standard Time", "zh-TW")),
+            (0, "安全")
+        );
     }
 
     #[test]
@@ -1030,23 +1277,27 @@ mod tests {
         // 界面/CLI 都引用 RISK_MAX；分数一旦超过分母就是 bug
         let (s, _) = risk_score(&fp("China Standard Time", "zh-CN"));
         assert!(s <= RISK_MAX, "得分 {} 超过了分母 {}", s, RISK_MAX);
-        // 四项全中也不能超
+        // 六项全中也不能超
         let mut worst = fp("China Standard Time", "zh-CN");
         worst.proxy_like_base_url = true;
         worst.ntp_leaks = true;
+        worst.fonts_vendor = vec!["MiSans".into(), "HarmonyOS Sans".into()];
+        worst.cn_browsers = vec!["360安全浏览器".into()];
         let (s2, l2) = risk_score(&worst);
-        assert!(s2 <= RISK_MAX, "四项全中得分 {} 超过分母", s2);
+        assert!(s2 <= RISK_MAX, "六项全中得分 {} 超过分母", s2);
         assert_eq!(l2, "高危");
     }
 
     #[test]
     fn 风险分_各权重加起来正好等于分母() {
-        // 保证"四项全中 = 满分"，否则分母就没有意义
+        // 保证"六项全中 = 满分"，否则分母就没有意义
         let mut worst = fp("China Standard Time", "zh-CN");
         worst.proxy_like_base_url = true;
         worst.ntp_leaks = true;
+        worst.fonts_vendor = vec!["MiSans".into(), "方正舒体".into()];
+        worst.cn_browsers = vec!["360安全浏览器".into()];
         let (s, _) = risk_score(&worst);
-        assert_eq!(s, RISK_MAX, "四项全中应等于分母");
+        assert_eq!(s, RISK_MAX, "六项全中应等于分母");
     }
 
     // ---------- ANTHROPIC_BASE_URL ----------
@@ -1208,20 +1459,85 @@ mod tests {
     fn 风险分_只中_base_url_时是中危() {
         let mut f = fp("Singapore Standard Time", "en-SG");
         f.proxy_like_base_url = true;
-        // 单靠 base_url（40）就是最高权重的单项，应落入中危区间
+        // 单靠 base_url（32）就是最高权重的单项，应落入中危区间
         let (s, l) = risk_score(&f);
-        assert_eq!(s, 40);
+        assert_eq!(s, 32);
         assert_eq!(l, "中危");
     }
 
     #[test]
     fn 风险分_时区加中转即高危() {
-        // 最典型的"挂了代理但没改时区"画像：时区 35 + 中转 40 = 75
+        // 最典型的"挂了代理但没改时区"画像：时区 30 + 中转 32 + 区域 10 = 72
         let mut f = fp("China Standard Time", "zh-CN");
         f.proxy_like_base_url = true;
         let (s, l) = risk_score(&f);
-        assert_eq!(s, 90); // 35 + 40 + 15
+        assert_eq!(s, 72);
         assert_eq!(l, "高危");
+    }
+
+    #[test]
+    fn 风险分_字体环境计分() {
+        // 厂商字体命中 1 个：0.8 × 18 = 14.4 → 14
+        let mut one = fp("Singapore Standard Time", "en-SG");
+        one.fonts_vendor = vec!["MiSans".into()];
+        assert_eq!(risk_score(&one).0, 14);
+        // 命中 ≥2：满分 18
+        let mut two = fp("Singapore Standard Time", "en-SG");
+        two.fonts_vendor = vec!["MiSans".into(), "Douyin Sans".into()];
+        assert_eq!(risk_score(&two).0, 18);
+        // 无厂商字体但非标配中文字体 ≥2：0.5 × 18 = 9（弱信号）
+        let mut extra = fp("Singapore Standard Time", "en-SG");
+        extra.fonts_extra = vec!["Source Han Sans".into(), "Noto Sans CJK SC".into()];
+        assert_eq!(risk_score(&extra).0, 9);
+        // 非标配只有 1 个：不足以构成信号
+        let mut weak = fp("Singapore Standard Time", "en-SG");
+        weak.fonts_extra = vec!["Source Han Sans".into()];
+        assert_eq!(risk_score(&weak).0, 0);
+    }
+
+    #[test]
+    fn 风险分_国产浏览器已装计满分权重() {
+        let mut f = fp("Singapore Standard Time", "en-SG");
+        f.cn_browsers = vec!["360安全浏览器".into()];
+        assert_eq!(risk_score(&f).0, 5);
+    }
+
+    // ---------- 字体 / 浏览器名单匹配 ----------
+
+    #[test]
+    fn 字体token匹配大小写与中文名() {
+        let names = vec![
+            "MiSans Regular (TrueType)".to_lowercase(),
+            "HarmonyOS Sans SC (TrueType)".to_lowercase(),
+            "方正舒体 (TrueType)".to_lowercase(),
+            "Microsoft YaHei (TrueType)".to_lowercase(), // Windows 标配，不该命中
+            "Segoe UI (TrueType)".to_lowercase(),
+        ];
+        let vendor = match_font_tokens(&names, VENDOR_FONT_TOKENS);
+        // HarmonyOS Sans 与其 SC 变体命中同一个 token，不重复计数
+        assert_eq!(
+            vendor,
+            vec![
+                "MiSans".to_string(),
+                "HarmonyOS Sans".to_string(),
+                "方正舒体".to_string()
+            ]
+        );
+        let extra = match_font_tokens(&names, EXTRA_CN_FONT_TOKENS);
+        assert!(extra.is_empty(), "标配字体不应命中非标配名单");
+    }
+
+    #[test]
+    fn 国产浏览器token不误伤非浏览器软件() {
+        // "360安全卫士" 不含 "360安全浏览器"，不该被报成浏览器
+        let display = "360安全卫士".to_lowercase();
+        assert!(!CN_BROWSER_TOKENS
+            .iter()
+            .any(|t| display.contains(&t.to_lowercase())));
+        let browser = "360安全浏览器".to_lowercase();
+        assert!(CN_BROWSER_TOKENS
+            .iter()
+            .any(|t| browser.contains(&t.to_lowercase())));
     }
 
     // ---------- 北美夏令时边界 ----------

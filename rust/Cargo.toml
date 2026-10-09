@@ -19,6 +19,10 @@ chrono = "0.4"
 # 参数字符串。webbrowser 走 ShellExecuteW，已在依赖树里（egui-winit 引入）。
 webbrowser = "1"
 
+# 把 assets/icon.ico 嵌进 exe 资源（见 build.rs 注释）
+[build-dependencies]
+embed-resource = "3"
+
 [profile.release]
 opt-level = "z"
 lto = true

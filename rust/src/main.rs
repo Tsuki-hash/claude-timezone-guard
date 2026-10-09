@@ -94,6 +94,16 @@ fn setup_fonts(ctx: &egui::Context) {
     }
 }
 
+/// 窗口任务栏图标：与 exe 资源图标同一张图（assets/icon.rgba，64×64 裸 RGBA，
+/// 由 assets/icon_gen.py 生成）。不设的话 eframe 会用自带的 "e" 默认图标。
+fn window_icon() -> egui::IconData {
+    egui::IconData {
+        rgba: include_bytes!("../assets/icon.rgba").to_vec(),
+        width: 64,
+        height: 64,
+    }
+}
+
 fn main() -> Result<(), eframe::Error> {
     // CLI 模式：便于脚本化 / 自测
     //   claude-fingerprint.exe status            -> 打印当前指纹
@@ -147,14 +157,18 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 700.0])
-            .with_min_inner_size([400.0, 620.0])
+            // 高度按主页内容定（见 ui.rs 布局回归测试量出的内容底边）：
+            // 主页一屏放下（零滚动），内容收进二级详情页。
+            .with_inner_size(ui::WINDOW_SIZE)
+            .with_min_inner_size(ui::MIN_WINDOW_SIZE)
             // 自绘标题栏（含最小化/最大化/关闭），窗口控制与界面融为同一行。
             // 早先保留原生标题栏，是因为当时的拖拽区实现会抢按钮的点击；
             // 改用 `ui.interact()` 先建拖拽响应、按钮后画（后画者交互优先）后
             // 两不误，见 ui.rs 的 draw_titlebar。
             .with_decorations(false)
-            .with_resizable(true),
+            .with_resizable(true)
+            // 窗口任务栏图标（不设会显示 eframe 自带的 "e" 图标）
+            .with_icon(std::sync::Arc::new(window_icon())),
         ..Default::default()
     };
     eframe::run_native(
@@ -245,6 +259,22 @@ fn cli_status() {
         ),
         None => println!("NTP 校时    : 未配置"),
     }
+    let font_txt = if !f.fonts_vendor.is_empty() {
+        format!("{}（国产厂商字体，不可修）", f.fonts_vendor.join("、"))
+    } else if !f.fonts_extra.is_empty() {
+        format!("{}（非标配中文字体，弱信号）", f.fonts_extra.join("、"))
+    } else {
+        "未命中".into()
+    };
+    println!("字体环境    : {}", font_txt);
+    println!(
+        "国产浏览器  : {}",
+        if f.cn_browsers.is_empty() {
+            "未安装".into()
+        } else {
+            format!("{}（建议卸载或避免日常使用）", f.cn_browsers.join("、"))
+        }
+    );
 
     println!("Chrome 运行 : {}", f.chrome_running);
     println!("Edge   运行 : {}", f.edge_running);

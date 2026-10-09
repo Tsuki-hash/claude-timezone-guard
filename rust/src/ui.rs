@@ -59,16 +59,18 @@ fn save_theme_pref(t: Theme) {
     }
 }
 
-/// 设计令牌：所有颜色集中在这里，两个主题共用同一套语义
+/// 设计令牌：所有颜色集中在这里，两个主题共用同一套语义。
+/// 视觉语言对齐「明亮工作台」：柔和蓝灰底 + 纯白卡片 + 品牌蓝强调 + 彩色数据。
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub bg: egui::Color32,      // 页面底
     pub panel: egui::Color32,   // 卡片
-    pub well: egui::Color32,    // 凹陷区（日志/读数）
-    pub line: egui::Color32,    // 分隔线 / 边框
+    pub well: egui::Color32,    // 凹陷区（迷你瓦片/日志）
+    pub line: egui::Color32,    // 卡片描边
     pub fg: egui::Color32,      // 主文字
     pub fg_dim: egui::Color32,  // 次文字
     pub fg_mute: egui::Color32, // 弱文字（标签）
+    pub accent: egui::Color32,  // 品牌蓝（CTA / hover 强调）
     pub sig_sg: egui::Color32,  // 信号色 A —— 新加坡（安全/零差异）
     pub sig_us: egui::Color32,  // 信号色 B —— 加州（琥珀）
     pub warn: egui::Color32,    // 中危
@@ -79,35 +81,37 @@ pub struct Palette {
 impl Palette {
     pub fn for_theme(t: Theme) -> Self {
         match t {
-            // 深色：仪器面板 —— 深蓝灰底，读数用高对比亮色
+            // 深色：深海军夜色（参考 dark 令牌），卡片是抬升的蓝灰面
             Theme::Dark => Self {
-                bg: egui::Color32::from_rgb(0x10, 0x13, 0x18),
-                panel: egui::Color32::from_rgb(0x1A, 0x1E, 0x25),
-                well: egui::Color32::from_rgb(0x0B, 0x0E, 0x12),
-                line: egui::Color32::from_rgb(0x2A, 0x30, 0x3A),
-                fg: egui::Color32::from_rgb(0xE8, 0xEE, 0xF5),
-                fg_dim: egui::Color32::from_rgb(0xA8, 0xB4, 0xC4),
-                fg_mute: egui::Color32::from_rgb(0x6C, 0x7A, 0x8C),
-                sig_sg: egui::Color32::from_rgb(0x4E, 0xC9, 0x8E),
-                sig_us: egui::Color32::from_rgb(0xE8, 0x9B, 0x3C),
-                warn: egui::Color32::from_rgb(0xE8, 0x9B, 0x3C),
-                danger: egui::Color32::from_rgb(0xE0, 0x5C, 0x5C),
-                ok: egui::Color32::from_rgb(0x4E, 0xC9, 0x8E),
+                bg: egui::Color32::from_rgb(0x0E, 0x17, 0x24),
+                panel: egui::Color32::from_rgb(0x1E, 0x2C, 0x40),
+                well: egui::Color32::from_rgb(0x24, 0x35, 0x4C),
+                line: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 32),
+                fg: egui::Color32::from_rgb(0xF0, 0xF6, 0xFF),
+                fg_dim: egui::Color32::from_rgb(0xA7, 0xB8, 0xCD),
+                fg_mute: egui::Color32::from_rgb(0x7A, 0x8C, 0xA3),
+                accent: egui::Color32::from_rgb(0x7B, 0xA4, 0xFF),
+                sig_sg: egui::Color32::from_rgb(0x4D, 0xDC, 0x95),
+                sig_us: egui::Color32::from_rgb(0xFF, 0xAB, 0x6B),
+                warn: egui::Color32::from_rgb(0xFF, 0xAB, 0x6B),
+                danger: egui::Color32::from_rgb(0xFF, 0x8A, 0x8A),
+                ok: egui::Color32::from_rgb(0x4D, 0xDC, 0x95),
             },
-            // 浅色：技术文档纸 —— 暖白底，同色系降饱和
+            // 浅色：柔和蓝灰底 + 纯白卡片（参考 light 令牌）
             Theme::Light => Self {
-                bg: egui::Color32::from_rgb(0xF4, 0xF6, 0xF8),
+                bg: egui::Color32::from_rgb(0xE9, 0xEF, 0xF6),
                 panel: egui::Color32::from_rgb(0xFF, 0xFF, 0xFF),
-                well: egui::Color32::from_rgb(0xEC, 0xEF, 0xF3),
-                line: egui::Color32::from_rgb(0xD8, 0xDE, 0xE6),
-                fg: egui::Color32::from_rgb(0x1A, 0x1E, 0x25),
-                fg_dim: egui::Color32::from_rgb(0x44, 0x4E, 0x5C),
-                fg_mute: egui::Color32::from_rgb(0x7A, 0x86, 0x94),
-                sig_sg: egui::Color32::from_rgb(0x1E, 0x8E, 0x5E),
-                sig_us: egui::Color32::from_rgb(0xB4, 0x6E, 0x14),
-                warn: egui::Color32::from_rgb(0xB4, 0x6E, 0x14),
-                danger: egui::Color32::from_rgb(0xC0, 0x39, 0x39),
-                ok: egui::Color32::from_rgb(0x1E, 0x8E, 0x5E),
+                well: egui::Color32::from_rgb(0xED, 0xF3, 0xFA),
+                line: egui::Color32::from_rgba_unmultiplied(126, 154, 184, 82),
+                fg: egui::Color32::from_rgb(0x12, 0x26, 0x3C),
+                fg_dim: egui::Color32::from_rgb(0x40, 0x58, 0x74),
+                fg_mute: egui::Color32::from_rgb(0x6E, 0x82, 0x98),
+                accent: egui::Color32::from_rgb(0x25, 0x63, 0xEB),
+                sig_sg: egui::Color32::from_rgb(0x08, 0xA6, 0x74),
+                sig_us: egui::Color32::from_rgb(0xF5, 0x82, 0x0A),
+                warn: egui::Color32::from_rgb(0xC5, 0x6F, 0x06),
+                danger: egui::Color32::from_rgb(0xDC, 0x33, 0x23),
+                ok: egui::Color32::from_rgb(0x08, 0xA6, 0x74),
             },
         }
     }
@@ -140,11 +144,23 @@ pub enum LogKind {
     Bad,
 }
 
+/// 页面层级：主页只放「状态 + 主要操作」，一屏放下不需要滚动；
+/// 完整读数、待处理清单与日志收进详情页。
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Page {
+    Home,
+    Detail,
+}
+
 pub struct App {
     pub theme: Theme,
     /// 已经写进 egui 全局样式的主题。None = 还没应用过。
     /// 用来把 apply_theme 从"每帧"降为"仅主题变化时"。
     applied_theme: Option<Theme>,
+    /// 当前页面（主页 / 详情页）
+    pub page: Page,
+    /// 圆角窗口属性是否已设置（只需一次）
+    corners_applied: bool,
     pub fp: Fingerprint,
     pub log: Vec<(String, LogKind)>,
     pub busy: bool,
@@ -169,6 +185,8 @@ impl App {
         let mut app = Self {
             theme,
             applied_theme: None,
+            page: Page::Home,
+            corners_applied: false,
             log: vec![(format!("就绪 · 当前时区 {}", fp.tz_id), LogKind::Info)],
             busy: false,
             backup: backup.clone(),
@@ -502,6 +520,11 @@ fn apply_theme(ctx: &egui::Context, theme: Theme) {
 // ============================================================
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 圆角窗口只需设置一次（Win11 生效，Win10 静默忽略保持直角）
+        if !self.corners_applied {
+            apply_round_corners();
+            self.corners_applied = true;
+        }
         self.poll_tasks();
         let p = Palette::for_theme(self.theme);
 
@@ -520,39 +543,16 @@ impl eframe::App for App {
         // 自绘标题栏（替代系统原生标题栏那一行）
         draw_titlebar(ctx, self, p);
 
-        // 整页滚动：内容高于窗口时出滚动条，任何区块都不会被裁掉。
-        // 早先靠"量内容高度 → 把窗口撑高"的自适应，但日志区是弹性高度
-        // （填满剩余空间），量出来的永远是"恰好填满当前窗口"，自适应条件
-        // 永远不触发 —— 小窗口下方的区块直接被裁掉且无法滚动看到。
+        // 页面路由：主页一屏放下（零滚动），详情页内部才滚动。
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::central_panel(&ctx.style())
                     .fill(p.bg)
-                    .inner_margin(egui::Margin::symmetric(18, 16)),
+                    .inner_margin(egui::Margin::symmetric(14, 12)),
             )
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        draw_header(ui, p);
-                        ui.add_space(11.0);
-
-                        draw_status_panel(ui, self, p);
-                        ui.add_space(11.0);
-
-                        draw_advice(ui, self, p);
-
-                        draw_exit_selector(ui, self, p);
-                        ui.add_space(11.0);
-
-                        draw_restore(ui, self, p);
-                        ui.add_space(11.0);
-
-                        draw_others(ui, self, p);
-                        ui.add_space(11.0);
-
-                        draw_log(ui, self, p);
-                    });
+            .show(ctx, |ui| match self.page {
+                Page::Home => draw_home(ui, self, p),
+                Page::Detail => draw_detail(ui, self, p),
             });
 
         // F5 手动刷新：挂了代理、改了环境变量或在外面跑了 CLI 之后，
@@ -570,6 +570,45 @@ impl eframe::App for App {
 // ============================================================
 // 区块
 // ============================================================
+/// Win11 圆角窗口：`with_decorations(false)` 的窗口默认直角，
+/// 按窗口标题拿到 HWND 后向 DWM 申请圆角（DWMWCP_ROUND）。
+/// Win10 无此属性，调用失败即静默忽略（保持直角，不影响功能）。
+/// 只在首个绘制帧调用一次。不走 raw-window-handle：0.6 把取句柄的方法
+/// 挪进了 deprecated 层，绕一圈不如按标题直取 HWND。
+fn apply_round_corners() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(class: *const u16, title: *const u16) -> *mut core::ffi::c_void;
+    }
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attr: u32,
+            val: *const u32,
+            size: u32,
+        ) -> i32;
+    }
+
+    // 与 main.rs 里 run_native 的窗口名一致
+    let title: Vec<u16> = OsStr::new("Claude 指纹切换器")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+    if hwnd.is_null() {
+        return;
+    }
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: u32 = 2;
+    unsafe {
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &DWMWCP_ROUND, 4);
+    }
+}
+
 /// 自绘标题栏 —— 应用标识、主题切换与窗口控制（最小化/最大化/关闭）合并为一行。
 /// 窗口为 `with_decorations(false)`，不再有系统标题栏那一行。
 fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
@@ -577,7 +616,7 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
         .frame(
             egui::Frame::NONE
                 .fill(p.bg)
-                .inner_margin(egui::Margin::symmetric(18, 8)),
+                .inner_margin(egui::Margin::symmetric(14, 7)),
         )
         .show(ctx, |ui| {
             // 拖拽 / 双击最大化：对整条标题栏先建一个交互响应。`ui.interact`
@@ -601,34 +640,57 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
             ui.horizontal(|ui| {
                 ui.set_height(26.0);
 
-                // 左：标识 + 名称
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(rect, egui::CornerRadius::same(4), p.sig_sg);
+                // 左：应用名，低声处理（12px、次级灰、不加图标不加粗）——
+                // 「静仪」哲学：标题栏不许抢数据的戏，绿色方块装饰已移除
                 ui.label(
                     egui::RichText::new("Claude 指纹切换器")
-                        .size(12.5)
-                        .strong()
-                        .color(p.fg),
+                        .size(11.5)
+                        .color(p.fg_dim),
                 );
+                ui.label(egui::RichText::new("v1.0").size(9.5).color(p.fg_mute));
 
                 // 右：主题切换 + 窗口控制
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // 关闭：hover 红，Windows 惯例
-                    if titlebar_button(ui, "✕", p.fg_dim, p.danger, egui::Color32::WHITE) {
+                    if win_ctrl_button(
+                        ui,
+                        WinIcon::Close,
+                        p.bg,
+                        p.fg_dim,
+                        p.danger,
+                        egui::Color32::WHITE,
+                    ) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                     // 最大化 / 还原（按当前状态切换图标）
                     let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                    let max_label = if maximized { "❐" } else { "□" };
-                    if titlebar_button(ui, max_label, p.fg_dim, p.well, p.fg) {
+                    let max_icon = if maximized {
+                        WinIcon::Restore
+                    } else {
+                        WinIcon::Max
+                    };
+                    if win_ctrl_button(ui, max_icon, p.bg, p.fg_dim, p.well, p.fg) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
-                    if titlebar_button(ui, "—", p.fg_dim, p.well, p.fg) {
+                    if win_ctrl_button(ui, WinIcon::Min, p.bg, p.fg_dim, p.well, p.fg) {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
 
+                    ui.add_space(4.0);
+                    // 刷新入口常驻标题栏（参考项目的 header 按钮）
+                    let rbtn =
+                        egui::Button::new(egui::RichText::new("刷新").color(p.fg_dim).size(10.5))
+                            .fill(blend(p.fg, p.bg, 0.93))
+                            .stroke(egui::Stroke::NONE)
+                            .corner_radius(5.0);
+                    if ui
+                        .add_sized([46.0, 22.0], rbtn)
+                        .on_hover_text("重新读取本机指纹与备份状态（快捷键 F5）")
+                        .clicked()
+                        && !app.busy
+                    {
+                        app.refresh_fingerprint();
+                    }
                     ui.add_space(4.0);
                     let (label, hover) = match app.theme {
                         Theme::Dark => ("浅色", "切换到浅色主题"),
@@ -655,51 +717,490 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
         });
 }
 
-/// 标题栏小按钮（窗口控制用）。hover 高亮要等按钮响应产生后才知道，
-/// 所以底色画在按钮之后、文字补画在底色之上。
-fn titlebar_button(
+/// 窗口控制图标（最小化 / 最大化 / 还原 / 关闭）
+#[derive(Clone, Copy)]
+enum WinIcon {
+    Min,
+    Max,
+    Restore,
+    Close,
+}
+
+/// 窗口控制按钮。图标用 painter 现画，不依赖字体字形 —— 「✕/❐」这类
+/// 符号在部分字体环境里渲染成方块（实测出现过「— □ □」），现画则任何
+/// 环境下形状一致，也更接近原生 Windows 窗口的观感。
+fn win_ctrl_button(
     ui: &mut egui::Ui,
-    label: &str,
+    icon: WinIcon,
+    bg: egui::Color32,
     idle_fg: egui::Color32,
     hover_bg: egui::Color32,
     hover_fg: egui::Color32,
 ) -> bool {
-    let btn = egui::Button::new(egui::RichText::new(label).size(11.0).color(idle_fg))
+    let btn = egui::Button::new("")
         .fill(egui::Color32::TRANSPARENT)
         .stroke(egui::Stroke::NONE)
-        .min_size(egui::vec2(30.0, 22.0));
+        .min_size(egui::vec2(32.0, 24.0));
     let resp = ui.add(btn);
-    if resp.hovered() {
+    let hovered = resp.hovered();
+    if hovered {
         ui.painter()
             .rect_filled(resp.rect, egui::CornerRadius::same(5), hover_bg);
-        ui.painter().text(
-            resp.rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(11.0),
-            hover_fg,
-        );
+    }
+    let fg = if hovered { hover_fg } else { idle_fg };
+    // 「还原」图标的两个方框互相遮挡，前框要用按钮当前底色先盖掉后框
+    let clear = if hovered { hover_bg } else { bg };
+    let r = resp.rect.shrink2(egui::vec2(11.0, 7.0));
+    let stroke = egui::Stroke::new(1.3_f32, fg);
+    let painter = ui.painter();
+    match icon {
+        WinIcon::Min => {
+            let y = r.center().y + 2.0;
+            painter.line_segment([egui::pos2(r.left(), y), egui::pos2(r.right(), y)], stroke);
+        }
+        WinIcon::Max => {
+            painter.rect_stroke(
+                r,
+                egui::CornerRadius::same(0),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        WinIcon::Restore => {
+            let back = r.translate(egui::vec2(2.0, -2.0));
+            painter.rect_stroke(
+                back,
+                egui::CornerRadius::same(0),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+            painter.rect_filled(r, egui::CornerRadius::same(0), clear);
+            painter.rect_stroke(
+                r,
+                egui::CornerRadius::same(0),
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        WinIcon::Close => {
+            painter.line_segment([r.left_top(), r.right_bottom()], stroke);
+            painter.line_segment([r.right_top(), r.left_bottom()], stroke);
+        }
     }
     resp.clicked()
 }
 
-fn draw_header(ui: &mut egui::Ui, p: Palette) {
-    ui.horizontal(|ui| {
-        // 左侧：标题 + 副标题（主题/窗口按钮已移到自绘标题栏）
-        ui.vertical(|ui| {
-            ui.label(
-                egui::RichText::new("Claude 指纹切换器")
-                    .size(20.0)
-                    .strong()
-                    .color(p.fg),
-            );
-            ui.label(
-                egui::RichText::new("时区 · 区域语言 · 浏览器语言")
-                    .size(10.5)
-                    .color(p.fg_mute),
-            );
+// ============================================================
+// 主页（一级页面）
+// ============================================================
+/// 窗口默认/最小尺寸（逻辑点）。主页内容高度由布局回归测试实测校准：
+/// `主页布局右边缘不溢出` 会按这套尺寸断言内容四边都在窗口内。
+pub const WINDOW_SIZE: [f32; 2] = [440.0, 632.0];
+pub const MIN_WINDOW_SIZE: [f32; 2] = [420.0, 628.0];
+/// 主页 —— 「明亮工作台」卡片仪表盘（视觉语言对齐参考项目）：
+/// 纯白卡片浮在蓝灰底上，大号彩色数字 + 状态胶囊 + 迷你数据瓦片。
+fn draw_home(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    draw_hero(ui, app, p);
+    ui.add_space(8.0);
+    draw_readings(ui, app, p);
+    ui.add_space(8.0);
+    draw_exits(ui, app, p);
+    ui.add_space(8.0);
+    draw_latest_log(ui, app, p);
+}
+
+/// 小节标题：小号、次级灰、加粗——只做路标，不抢内容的戏
+fn section_label(ui: &mut egui::Ui, p: Palette, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .strong()
+            .size(10.0)
+            .color(p.fg_mute),
+    );
+    ui.add_space(4.0);
+}
+
+/// 状态胶囊：风险色 15% 底 + 同色墨字 + 圆点（参考 status-pill）
+fn status_pill(ui: &mut egui::Ui, p: Palette, text: &str, ink: egui::Color32) {
+    let btn = egui::Button::new(
+        egui::RichText::new(format!("● {}", text))
+            .size(10.0)
+            .color(ink),
+    )
+    .fill(blend(ink, p.panel, 0.85))
+    .stroke(egui::Stroke::NONE)
+    .corner_radius(9.0);
+    ui.add(btn);
+}
+
+/// hero 风险卡：小标题 + 状态胶囊 + 大号彩色数字 + 两块迷你数据瓦片。
+/// 大数字是全界面唯一的响亮元素，语言对齐参考项目的「账户余额」卡。
+fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    let f = &app.fp;
+    let (score, level) = risk_score(f);
+    let color = p.risk(score);
+    let tripped = f.risk_items().iter().filter(|i| i.score >= 0.25).count();
+
+    egui::Frame::NONE
+        .fill(p.panel)
+        .stroke(egui::Stroke::new(1.0_f32, p.line))
+        .corner_radius(12.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // 标题行：小标 + 右侧状态胶囊
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("指纹风险").size(10.0).color(p.fg_mute));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if tripped > 0 {
+                        status_pill(ui, p, &format!("{} 项未规避", tripped), p.danger);
+                    } else {
+                        status_pill(ui, p, "已规避", p.ok);
+                    }
+                });
+            });
+            ui.add_space(3.0);
+
+            // 大数字行
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(score.to_string())
+                        .font(egui::FontId::monospace(26.0))
+                        .strong()
+                        .color(color),
+                );
+                ui.label(
+                    egui::RichText::new(format!("/{}", RISK_MAX))
+                        .font(egui::FontId::monospace(10.5))
+                        .color(p.fg_mute),
+                );
+                ui.add_space(8.0);
+                ui.label(egui::RichText::new(level).size(11.5).strong().color(color));
+            });
+            ui.add_space(7.0);
+
+            // 迷你瓦片 ×2：两处最需要盯着的特征
+            let tz_color = match f.tz_tier() {
+                TzTier::Full => p.danger,
+                TzTier::Partial => p.warn,
+                TzTier::None => p.ok,
+            };
+            let bu = match &f.base_url {
+                Some(u) => truncate(
+                    u.trim_start_matches("https://")
+                        .trim_start_matches("http://"),
+                    24,
+                ),
+                None => "未设置".into(),
+            };
+            let tw = (ui.available_width() - 6.0) / 2.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                mini_tile(ui, p, tw, "当前时区", &truncate(&f.tz_id, 22), tz_color);
+                mini_tile(
+                    ui,
+                    p,
+                    tw,
+                    "中转地址",
+                    &bu,
+                    if f.proxy_like_base_url {
+                        p.danger
+                    } else {
+                        p.ok
+                    },
+                );
+            });
         });
+}
+
+/// 迷你数据瓦片：凹陷底 + 小标签 + 彩色等宽值。
+/// 用 `add_sized` 锁定精确尺寸：`set_min_width` 只是下限，长文本的自然宽度
+/// 会撑破瓦片（实测把右边缘推出窗口 22.5px）；`painter_at` 自带矩形裁剪，
+/// 超长值在瓦片边缘截断，绝不外溢。
+fn mini_tile(
+    ui: &mut egui::Ui,
+    p: Palette,
+    w: f32,
+    caption: &str,
+    value: &str,
+    color: egui::Color32,
+) {
+    let resp = ui.add_sized(
+        [w, 42.0],
+        egui::Button::new("")
+            .fill(p.well)
+            .stroke(egui::Stroke::NONE),
+    );
+    let rect = resp.rect;
+    let painter = ui.painter_at(rect);
+    let cx = rect.left() + 10.0;
+    painter.text(
+        egui::pos2(cx, rect.top() + 11.0),
+        egui::Align2::LEFT_CENTER,
+        caption,
+        egui::FontId::proportional(9.0),
+        p.fg_mute,
+    );
+    painter.text(
+        egui::pos2(cx, rect.top() + 28.0),
+        egui::Align2::LEFT_CENTER,
+        value,
+        egui::FontId::monospace(10.0),
+        color,
+    );
+}
+
+/// 本机指纹读数卡：白卡内标签右对齐成列，值共享左边缘；右上角进入详情页。
+fn draw_readings(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    let f = &app.fp;
+    egui::Frame::NONE
+        .fill(p.panel)
+        .stroke(egui::Stroke::new(1.0_f32, p.line))
+        .corner_radius(12.0)
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("本机指纹").size(10.0).color(p.fg_mute));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("详情 ›").size(10.0).color(p.accent),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::NONE),
+                        )
+                        .clicked()
+                    {
+                        app.page = Page::Detail;
+                    }
+                });
+            });
+            ui.add_space(3.0);
+
+            let bu = match &f.base_url {
+                Some(u) => u.clone(),
+                None => "未设置".into(),
+            };
+            let ntp = f.ntp_server.clone().unwrap_or_else(|| "未配置".into());
+            let (tz_txt, tz_color) = match f.tz_tier() {
+                TzTier::Full => (f.tz_id.clone(), p.danger),
+                TzTier::Partial => (format!("{}（港澳·受限地区）", f.tz_id), p.warn),
+                TzTier::None => (f.tz_id.clone(), p.ok),
+            };
+            let (font_txt, font_color) = if !f.fonts_vendor.is_empty() {
+                (truncate(&f.fonts_vendor.join("、"), 30), p.danger)
+            } else if !f.fonts_extra.is_empty() {
+                (truncate(&f.fonts_extra.join("、"), 30), p.warn)
+            } else {
+                ("未命中".into(), p.ok)
+            };
+            let (browser_txt, browser_color) = if f.cn_browsers.is_empty() {
+                ("未安装".into(), p.ok)
+            } else {
+                (truncate(&f.cn_browsers.join("、"), 30), p.danger)
+            };
+
+            fingerprint_row(ui, p, "时区", &tz_txt, Some(tz_color));
+            fingerprint_row(
+                ui,
+                p,
+                "中转地址",
+                &bu,
+                Some(if f.proxy_like_base_url {
+                    p.danger
+                } else {
+                    p.ok
+                }),
+            );
+            fingerprint_row(
+                ui,
+                p,
+                "区域语言",
+                &f.culture,
+                Some(if f.culture == "zh-CN" { p.danger } else { p.ok }),
+            );
+            fingerprint_row(
+                ui,
+                p,
+                "NTP 校时",
+                &ntp,
+                Some(if f.ntp_leaks { p.warn } else { p.ok }),
+            );
+            fingerprint_row(ui, p, "字体环境", &font_txt, Some(font_color));
+            fingerprint_row(ui, p, "国产浏览器", &browser_txt, Some(browser_color));
+            // 只读展示（本工具不改）：中性墨色，不带状态点
+            fingerprint_row(ui, p, "浏览器语言", &f.browser_lang, None);
+            fingerprint_row(ui, p, "界面语言", &f.ui_langs, None);
+        });
+}
+
+/// 一行读数：标签右对齐入 72px 列，值等宽、共享左边缘，全宽不截断。
+/// 颜色纪律：只有「有发现」的值才着风险色，其余一律正墨。
+fn fingerprint_row(
+    ui: &mut egui::Ui,
+    p: Palette,
+    label: &str,
+    value: &str,
+    status: Option<egui::Color32>,
+) {
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(72.0, 17.0),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                ui.label(egui::RichText::new(label).size(9.5).color(p.fg_mute));
+            },
+        );
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let c = status.unwrap_or(p.fg);
+        ui.label(
+            egui::RichText::new(value)
+                .font(egui::FontId::monospace(10.5))
+                .color(c),
+        );
     });
+    ui.add_space(2.0);
+}
+
+/// 切换出口：两张主出口卡（时钟对照是唯一的彩色瞬间）+ 次要出口 + 一键恢复。
+fn draw_exits(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    section_label(ui, p, "切换出口");
+    draw_exit_selector(ui, app, p);
+    ui.add_space(5.0);
+
+    // 次要出口与检测页：无边框文字钮，与主卡拉开层级
+    let others = [
+        (Profile::Taipei, "台北"),
+        (Profile::Tokyo, "东京"),
+        (Profile::NewYork, "纽约"),
+        (Profile::Shanghai, "上海"),
+    ];
+    let n = 5.0;
+    let bw = (ui.available_width() - (n - 1.0) * 5.0) / n;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        for (key, label) in others {
+            let btn = egui::Button::new(egui::RichText::new(label).color(p.fg_dim).size(10.5))
+                .fill(p.panel)
+                .stroke(egui::Stroke::new(1.0_f32, p.line))
+                .corner_radius(6.0);
+            if ui
+                .add_sized([bw, 26.0], btn)
+                .on_hover_text(info(key).sub)
+                .clicked()
+                && !app.busy
+            {
+                app.switch_to(key);
+            }
+        }
+        let web = egui::Button::new(egui::RichText::new("检测页").color(p.fg_dim).size(10.5))
+            .fill(p.panel)
+            .stroke(egui::Stroke::new(1.0_f32, p.line))
+            .corner_radius(6.0);
+        if ui.add_sized([bw, 24.0], web).clicked() {
+            // 用 webbrowser crate（走 ShellExecuteW）而不是 `cmd /C start`：
+            //   - `Command::new("cmd")` 是裸名，会按 CreateProcess 的搜索顺序
+            //     （应用目录 → 当前目录 → System32 → …）找 cmd.exe，同目录或
+            //     当前目录里的假 cmd.exe 能劫持它 —— 与本项目 sys_tool() 的
+            //     绝对路径加固理念自相矛盾。
+            //   - `cmd /C start <串>` 会重新解析该字符串，将来 URL 一旦变成
+            //     可配置/可拼接，`&`、`^`、`"` 立刻变成命令注入面。
+            match webbrowser::open(DETECT_PAGE_URL) {
+                Ok(()) => app.push_log("已在浏览器打开检测页".into(), LogKind::Info),
+                Err(e) => app.push_log(
+                    format!("打开检测页失败: {} —— 请手动访问 {}", e, DETECT_PAGE_URL),
+                    LogKind::Warn,
+                ),
+            }
+        }
+    });
+
+    ui.add_space(5.0);
+    draw_restore(ui, app, p);
+}
+
+/// 按字符数截断（汉字按字符计，不截半字节）
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() > n {
+        format!("{}…", s.chars().take(n).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// 前景/底色实色混合（bg_ratio = 底色占比），egui 透明度不稳时用它
+fn blend(fg: egui::Color32, bg: egui::Color32, bg_ratio: f32) -> egui::Color32 {
+    let t = 1.0 - bg_ratio;
+    let mix = |a: u8, b: u8| (a as f32 * t + b as f32 * bg_ratio).round() as u8;
+    egui::Color32::from_rgb(
+        mix(fg.r(), bg.r()),
+        mix(fg.g(), bg.g()),
+        mix(fg.b(), bg.b()),
+    )
+}
+
+/// 最近一条日志 —— 主页底部单行；多行日志只取首行截断，完整日志在详情页。
+fn draw_latest_log(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    let Some((msg, kind)) = app.log.last() else {
+        return;
+    };
+    let c = match kind {
+        LogKind::Ok => p.ok,
+        LogKind::Warn => p.warn,
+        LogKind::Bad => p.danger,
+        LogKind::Info => p.fg_dim,
+    };
+    let first_line = msg.lines().next().unwrap_or_default();
+    let text = truncate(first_line, 72);
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("›")
+                .font(egui::FontId::monospace(10.5))
+                .color(p.fg_mute),
+        );
+        ui.label(
+            egui::RichText::new(text)
+                .font(egui::FontId::monospace(10.5))
+                .color(c),
+        );
+    });
+}
+
+// ============================================================
+// 详情页（二级页面）
+// ============================================================
+/// 详情页 —— 完整指纹读数、待处理清单与操作日志，内部可滚动。
+fn draw_detail(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    ui.horizontal(|ui| {
+        let back = egui::Button::new(egui::RichText::new("← 返回").size(11.5).color(p.fg_dim))
+            .fill(p.panel)
+            .stroke(egui::Stroke::new(1.0_f32, p.line))
+            .corner_radius(6.0);
+        if ui.add_sized([64.0, 24.0], back).clicked() {
+            app.page = Page::Home;
+        }
+        ui.label(
+            egui::RichText::new("指纹详情")
+                .strong()
+                .size(14.0)
+                .color(p.fg),
+        );
+    });
+    ui.add_space(8.0);
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            draw_status_panel(ui, app, p);
+            ui.add_space(11.0);
+            draw_advice(ui, app, p);
+            ui.add_space(11.0);
+            draw_log(ui, app, p);
+        });
 }
 
 /// 当前状态卡 —— 仪器读数风格：等宽数字 + 细分隔线
@@ -718,44 +1219,13 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            // 卡头：标题 + 状态点
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("当前指纹")
-                        .strong()
-                        .size(12.5)
-                        .color(p.fg),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 刷新常驻状态卡：改了代理/环境变量、或在外面跑了 CLI 之后，
-                    // 点这里重读，不必滚到底部找按钮
-                    let rbtn =
-                        egui::Button::new(egui::RichText::new("刷新").color(p.fg_dim).size(11.0))
-                            .fill(p.well)
-                            .stroke(egui::Stroke::new(1.0_f32, p.line))
-                            .corner_radius(6.0);
-                    if ui
-                        .add_sized([52.0, 20.0], rbtn)
-                        .on_hover_text("重新读取本机指纹与备份状态（快捷键 F5）")
-                        .clicked()
-                        && !app.busy
-                    {
-                        app.refresh_fingerprint();
-                    }
-                    // 状态点必须看全部风险项：早先只看时区，切了时区但中转地址
-                    // 还挂着时这里亮绿灯"已规避"，与同屏的风险分/待处理清单矛盾
-                    let tripped = f.risk_items().iter().filter(|i| i.tripped).count();
-                    let (dot, txt) = if tripped > 0 {
-                        (p.danger, format!("{} 项特征未规避", tripped))
-                    } else {
-                        (p.ok, "已规避".to_string())
-                    };
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 3.5, dot);
-                    ui.label(egui::RichText::new(txt).size(11.0).color(dot));
-                });
-            });
+            // 卡头：标题（风险结论与刷新入口在主页 hero，详情页只负责完整读数）
+            ui.label(
+                egui::RichText::new("当前指纹")
+                    .strong()
+                    .size(12.5)
+                    .color(p.fg),
+            );
 
             ui.add_space(9.0);
             hairline(ui, p);
@@ -767,7 +1237,11 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                 "时区",
                 &f.tz_id,
                 p,
-                Some(if f.is_china_tz { p.danger } else { p.ok }),
+                Some(match f.tz_tier() {
+                    TzTier::Full => p.danger,
+                    TzTier::Partial => p.warn,
+                    TzTier::None => p.ok,
+                }),
             );
             reading(ui, "本地时间", &f.now, p, None);
             reading(ui, "区域语言", &f.culture, p, None);
@@ -781,6 +1255,43 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             reading(ui, "浏览器语言", &f.browser_lang, p, None);
             // 只读展示：让用户亲眼确认界面语言没被动过（曾经会写，现已移除）
             reading(ui, "界面语言", &f.ui_langs, p, Some(p.fg_mute));
+            // 环境残留：本工具改不了，但必须让用户知情
+            let font_txt = if !f.fonts_vendor.is_empty() {
+                f.fonts_vendor.join("、")
+            } else if !f.fonts_extra.is_empty() {
+                f.fonts_extra.join("、")
+            } else {
+                "未命中".into()
+            };
+            reading(
+                ui,
+                "字体环境",
+                &font_txt,
+                p,
+                Some(if !f.fonts_vendor.is_empty() {
+                    p.danger
+                } else if !f.fonts_extra.is_empty() {
+                    p.warn
+                } else {
+                    p.ok
+                }),
+            );
+            let browser_txt = if f.cn_browsers.is_empty() {
+                "未安装".into()
+            } else {
+                f.cn_browsers.join("、")
+            };
+            reading(
+                ui,
+                "国产浏览器",
+                &browser_txt,
+                p,
+                Some(if f.cn_browsers.is_empty() {
+                    p.ok
+                } else {
+                    p.danger
+                }),
+            );
 
             ui.add_space(9.0);
             hairline(ui, p);
@@ -892,52 +1403,37 @@ fn exit_card(ui: &mut egui::Ui, app: &mut App, w: f32, key: Profile, p: Palette)
     };
 
     let resp = ui.add_sized(
-        [w, 70.0],
+        [w, 62.0],
         egui::Button::new("")
             .fill(p.panel)
             .stroke(egui::Stroke::new(1.0_f32, p.line)),
     );
-    // hover 时点亮边框
+    // hover 时点亮品牌蓝边框，并给出副标说明（卡内只留名称与时钟）
+    let clicked = resp.clicked();
+    let rect = resp.rect;
     if resp.hovered() {
-        ui.painter().rect_stroke(
-            resp.rect,
-            egui::CornerRadius::same(9),
-            egui::Stroke::new(1.6_f32, accent),
+        ui.painter_at(rect).rect_stroke(
+            rect,
+            egui::CornerRadius::same(10),
+            egui::Stroke::new(1.4_f32, p.accent),
             egui::StrokeKind::Inside,
         );
+        resp.clone()
+            .on_hover_text(format!("{} · 点击切换", inf.sub));
     }
 
-    let rect = resp.rect;
     let painter = ui.painter_at(rect);
     let x0 = rect.left();
     let top = rect.top();
 
-    // 左侧竖向色条（4px）
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            egui::pos2(x0 + 1.0, top + 1.0),
-            egui::vec2(3.0, rect.height() - 2.0),
-        ),
-        egui::CornerRadius::same(0),
-        accent,
-    );
-
-    let pad = 14.0;
-    let cx = x0 + pad + 4.0;
+    let cx = x0 + 14.0;
 
     painter.text(
-        egui::pos2(cx, top + 19.0),
+        egui::pos2(cx, top + 17.0),
         egui::Align2::LEFT_CENTER,
         inf.label,
-        egui::FontId::proportional(15.0),
+        egui::FontId::proportional(13.5),
         p.fg,
-    );
-    painter.text(
-        egui::pos2(cx, top + 35.0),
-        egui::Align2::LEFT_CENTER,
-        inf.sub,
-        egui::FontId::proportional(10.0),
-        p.fg_mute,
     );
 
     // 时钟对照：北京 ↔ 目标（按目标时区真实偏移，含 DST）
@@ -951,7 +1447,7 @@ fn exit_card(ui: &mut egui::Ui, app: &mut App, w: f32, key: Profile, p: Palette)
         format!("{:+.0}h", diff_h)
     };
     painter.text(
-        egui::pos2(cx, top + 54.0),
+        egui::pos2(cx, top + 38.0),
         egui::Align2::LEFT_CENTER,
         format!(
             "北京 {}  →  {}  ({})",
@@ -963,7 +1459,7 @@ fn exit_card(ui: &mut egui::Ui, app: &mut App, w: f32, key: Profile, p: Palette)
         accent,
     );
 
-    if resp.clicked() && !app.busy {
+    if clicked && !app.busy {
         app.switch_to(key);
     }
 }
@@ -1004,15 +1500,50 @@ fn draw_advice(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             "把 Windows 时间服务换成境外 NTP，或让 NTP 走代理（本工具改不了）".into(),
         ));
     }
-    if f.is_china_tz {
-        rows.push((
+    match f.tz_tier() {
+        TzTier::Full => rows.push((
             p.danger,
             "系统时区".into(),
             "点下面的「新加坡」或「台北」即可（UTC+8，时钟零差异）".into(),
-        ));
+        )),
+        TzTier::Partial => rows.push((
+            p.warn,
+            "系统时区".into(),
+            "港澳属受限地区（部分风险）——切换到「新加坡」可完全规避".into(),
+        )),
+        TzTier::None => {}
     }
     if f.culture == "zh-CN" {
         rows.push((p.warn, "区域格式".into(), "点任一境外画像时一并修改".into()));
+    }
+    if !f.fonts_vendor.is_empty() {
+        rows.push((
+            p.warn,
+            "字体环境".into(),
+            format!(
+                "已装国产厂商字体（{}，不可修）：来自国产设备同步或 WPS，需要时可在「设置 → 个性化 → 字体」卸载",
+                f.fonts_vendor.join("、")
+            ),
+        ));
+    } else if f.fonts_extra.len() >= 2 {
+        rows.push((
+            p.warn,
+            "字体环境".into(),
+            format!(
+                "装有多个非 Windows 标配的中文字体（{}）：通常来自设计软件，弱信号，可不处理",
+                f.fonts_extra.join("、")
+            ),
+        ));
+    }
+    if !f.cn_browsers.is_empty() {
+        rows.push((
+            p.warn,
+            "国产浏览器".into(),
+            format!(
+                "已安装 {}——卸载或避免日常使用（卸载请自行在系统里确认，本工具不代劳）",
+                f.cn_browsers.join("、")
+            ),
+        ));
     }
 
     if rows.is_empty() {
@@ -1066,20 +1597,22 @@ fn draw_advice(ui: &mut egui::Ui, app: &mut App, p: Palette) {
 
 fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
     let enabled = app.backup_ready() && !app.busy;
-    let txt_color = if enabled { p.fg } else { p.fg_mute };
+    // 实心品牌蓝 CTA：全界面唯一的高对比按钮，恢复操作值得这个分量
+    let (fill, txt_color) = if enabled {
+        (p.accent, p.bg)
+    } else {
+        (p.well, p.fg_mute)
+    };
     let btn = egui::Button::new(
         egui::RichText::new("↩  一键恢复 · 还原到切换前")
-            .size(12.5)
+            .size(12.0)
             .strong()
             .color(txt_color),
     )
-    .fill(if enabled { p.panel } else { p.well })
-    .stroke(egui::Stroke::new(
-        1.0_f32,
-        if enabled { p.line } else { p.well },
-    ))
+    .fill(fill)
+    .stroke(egui::Stroke::NONE)
     .corner_radius(8.0)
-    .min_size(egui::vec2(ui.available_width(), 34.0));
+    .min_size(egui::vec2(ui.available_width(), 30.0));
 
     let resp = ui.add(btn);
     let clicked = resp.clicked();
@@ -1107,72 +1640,6 @@ fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             app.restore();
         }
     }
-}
-
-fn draw_others(ui: &mut egui::Ui, app: &mut App, p: Palette) {
-    ui.label(
-        egui::RichText::new("其他出口")
-            .strong()
-            .size(12.0)
-            .color(p.fg),
-    );
-    ui.add_space(6.0);
-
-    // 单行紧凑 chips：4 个地区 + 2 个动作
-    let others = [
-        (Profile::Taipei, "台北"),
-        (Profile::Tokyo, "东京"),
-        (Profile::NewYork, "纽约"),
-        (Profile::Shanghai, "上海"),
-    ];
-    let n = 6.0;
-    let bw = (ui.available_width() - (n - 1.0) * 5.0) / n;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        for (key, label) in others {
-            let btn = egui::Button::new(egui::RichText::new(label).color(p.fg_dim).size(11.0))
-                .fill(p.panel)
-                .stroke(egui::Stroke::new(1.0_f32, p.line))
-                .corner_radius(6.0);
-            if ui
-                .add_sized([bw, 28.0], btn)
-                .on_hover_text(info(key).sub)
-                .clicked()
-                && !app.busy
-            {
-                app.switch_to(key);
-            }
-        }
-        let refresh = egui::Button::new(egui::RichText::new("刷新").color(p.fg_dim).size(11.0))
-            .fill(p.panel)
-            .stroke(egui::Stroke::new(1.0_f32, p.line))
-            .corner_radius(6.0);
-        if ui.add_sized([bw, 28.0], refresh).clicked() {
-            app.refresh_fingerprint();
-        }
-
-        let web = egui::Button::new(egui::RichText::new("检测页").color(p.fg_dim).size(11.0))
-            .fill(p.panel)
-            .stroke(egui::Stroke::new(1.0_f32, p.line))
-            .corner_radius(6.0);
-        if ui.add_sized([bw, 28.0], web).clicked() {
-            // 用 webbrowser crate（走 ShellExecuteW）而不是 `cmd /C start`：
-            //   - `Command::new("cmd")` 是裸名，会按 CreateProcess 的搜索顺序
-            //     （应用目录 → 当前目录 → System32 → …）找 cmd.exe，同目录或
-            //     当前目录里的假 cmd.exe 能劫持它 —— 与本项目 sys_tool() 的
-            //     绝对路径加固理念自相矛盾。
-            //   - `cmd /C start <串>` 会重新解析该字符串，将来 URL 一旦变成
-            //     可配置/可拼接，`&`、`^`、`"` 立刻变成命令注入面。
-            // webbrowser 已在依赖树里（egui-winit 引入），直接用它的 API 最干净。
-            match webbrowser::open(DETECT_PAGE_URL) {
-                Ok(()) => app.push_log("已在浏览器打开检测页".into(), LogKind::Info),
-                Err(e) => app.push_log(
-                    format!("打开检测页失败: {} —— 请手动访问 {}", e, DETECT_PAGE_URL),
-                    LogKind::Warn,
-                ),
-            }
-        }
-    });
 }
 
 /// 日志 —— 终端风格：等宽、左对齐、按级别着色
@@ -1262,4 +1729,71 @@ fn hairline(ui: &mut egui::Ui, p: Palette) {
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(0), p.line);
+}
+
+// ============================================================
+// 布局回归测试（无头 egui，不需要窗口/OpenGL）
+// ============================================================
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// 主页内容右边缘不得超出窗口内边界（CentralPanel 右侧 14px 边距内）。
+    /// 用无头 egui 真实走一遍布局，量出实际右边缘。
+    #[test]
+    fn 主页布局右边缘不溢出() {
+        let (win_w, win_h) = (WINDOW_SIZE[0], WINDOW_SIZE[1]);
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(win_w, win_h),
+            )),
+            ..Default::default()
+        };
+        let mut app = App::new();
+        let inner_right = win_w - 14.0;
+        let inner_bottom = win_h - 12.0;
+        let mut edges: Vec<(&str, f32, f32)> = Vec::new();
+
+        let _ = ctx.run(raw, |ctx| {
+            let p = Palette::for_theme(app.theme);
+            draw_titlebar(ctx, &mut app, p);
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::central_panel(&ctx.style())
+                        .fill(p.bg)
+                        .inner_margin(egui::Margin::symmetric(14, 12)),
+                )
+                .show(ctx, |ui| match app.page {
+                    Page::Home => {
+                        draw_hero(ui, &mut app, p);
+                        edges.push(("hero 卡", ui.min_rect().right(), ui.min_rect().bottom()));
+                        draw_readings(ui, &mut app, p);
+                        edges.push(("readings 卡", ui.min_rect().right(), ui.min_rect().bottom()));
+                        draw_exits(ui, &mut app, p);
+                        edges.push(("exits 区", ui.min_rect().right(), ui.min_rect().bottom()));
+                        draw_latest_log(ui, &mut app, p);
+                        edges.push(("日志行", ui.min_rect().right(), ui.min_rect().bottom()));
+                    }
+                    Page::Detail => {}
+                });
+        });
+
+        // 每个分区的右/下边缘都必须落在窗口内边界以内（0.5px 容差）
+        for (name, right, bottom) in &edges {
+            assert!(
+                *right <= inner_right + 0.5,
+                "{name} 右边缘 {right:.1} 超出内边界 {inner_right:.1}——布局溢出会把内容截断在窗口外"
+            );
+            assert!(
+                *bottom <= inner_bottom + 0.5,
+                "{name} 底边缘 {bottom:.1} 超出内边界 {inner_bottom:.1}——窗口高度不足以容纳主页内容（WINDOW_SIZE 需调大或布局需收紧）"
+            );
+        }
+        println!(
+            "[layout] 内容底边: {:.1} / 内边界 {inner_bottom:.1}",
+            edges[3].2
+        );
+    }
 }
