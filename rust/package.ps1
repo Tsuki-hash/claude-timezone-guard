@@ -62,6 +62,10 @@ if (Test-Path $readme) {
     Write-Host "⚠ 未找到 $readme，dist 里将没有使用手册" -ForegroundColor Yellow
 }
 
+# MIT 许可证要求随分发附带版权声明与许可原文
+$license = Join-Path $root 'LICENSE'
+if (Test-Path $license) { Copy-Item $license (Join-Path $OutDir 'LICENSE') }
+
 # 4) 校验和：用户需要一个能核对二进制的方式
 $exeOut  = Join-Path $OutDir 'claude-fingerprint.exe'
 $hash    = (Get-FileHash $exeOut -Algorithm SHA256).Hash
