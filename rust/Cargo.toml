@@ -18,6 +18,9 @@ chrono = "0.4"
 # 搜索顺序（应用目录→当前目录→System32→PATH）劫持，而 cmd 还会二次解析
 # 参数字符串。webbrowser 走 ShellExecuteW，已在依赖树里（egui-winit 引入）。
 webbrowser = "1"
+# 出口侧风险估算（status --remote / 详情页「出口侧」读数）：
+# 调用 FuckClaude 的公开 /api/check。rustls 纯 Rust TLS，不引 OpenSSL。
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 # 把 assets/icon.ico 嵌进 exe 资源（见 build.rs 注释）
 [build-dependencies]

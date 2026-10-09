@@ -10,6 +10,7 @@ use crate::browser::{
     BackupState,
 };
 use crate::core::*;
+use crate::remote::{self, RemoteEstimate};
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
@@ -170,6 +171,11 @@ pub struct App {
     pub backup: BackupState,
     /// 当前在跑的任务的接收端。**不长期持有 Sender** —— 见 poll_tasks 的说明。
     task_rx: Option<Receiver<TaskResult>>,
+    /// 出口侧估算（FuckClaude /api/check）的最近一次结果；None = 未查询。
+    /// 与主任务通道分离：5s 的网络请求不该把切换按钮一起锁死。
+    remote: Option<Result<RemoteEstimate, String>>,
+    remote_rx: Option<Receiver<Result<RemoteEstimate, String>>>,
+    remote_busy: bool,
 }
 
 pub enum TaskResult {
@@ -191,6 +197,9 @@ impl App {
             busy: false,
             backup: backup.clone(),
             task_rx: None,
+            remote: None,
+            remote_rx: None,
+            remote_busy: false,
             fp,
         };
         match &backup {
@@ -253,7 +262,46 @@ impl App {
         thread::spawn(move || work(tx));
     }
 
+    /// 请求出口侧估算：独立通道 + 独立忙碌位，5s 的网络请求不锁切换按钮。
+    fn request_remote(&mut self) {
+        if self.remote_busy {
+            return;
+        }
+        self.remote_busy = true;
+        let (tx, rx) = channel::<Result<RemoteEstimate, String>>();
+        self.remote_rx = Some(rx);
+        thread::spawn(move || {
+            let _ = tx.send(remote::fetch_remote_estimate());
+        });
+    }
+
     fn poll_tasks(&mut self) {
+        // 出口侧估算结果（独立通道）
+        if let Some(rx) = self.remote_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(result) => {
+                    match &result {
+                        Ok(est) => self.push_log(
+                            format!("出口侧估算：{} · Geo {}", est.headline(), est.geo_summary()),
+                            LogKind::Info,
+                        ),
+                        Err(e) => self.push_log(format!("出口侧估算失败：{e}"), LogKind::Warn),
+                    }
+                    self.remote = Some(result);
+                    self.remote_busy = false;
+                    self.remote_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.remote_busy = false;
+                    self.remote_rx = None;
+                    self.push_log(
+                        "内部错误：出口侧查询线程异常退出，请重试。".into(),
+                        LogKind::Bad,
+                    );
+                }
+            }
+        }
         let Some(rx) = self.task_rx.as_ref() else {
             return;
         };
@@ -269,7 +317,7 @@ impl App {
                 self.fp = read_fingerprint();
                 self.refresh_backup_state();
             }
-            // Empty = 还没结果，下一帧再看
+            // Remote 走独立通道（remote_rx），不会出现在主通道里
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             // Disconnected = 工作线程已退出却没发结果，即它 panic 了。
             // 必须复位 busy，否则所有按钮从此失效、界面看似卡死。
@@ -836,10 +884,31 @@ fn status_pill(ui: &mut egui::Ui, p: Palette, text: &str, ink: egui::Color32) {
 /// hero 风险卡：小标题 + 状态胶囊 + 大号彩色数字 + 两块迷你数据瓦片。
 /// 大数字是全界面唯一的响亮元素，语言对齐参考项目的「账户余额」卡。
 fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
-    let f = &app.fp;
-    let (score, level) = risk_score(f);
+    // 先把需要的画像值取出来再进 UI 闭包：闭包里要调用 app.request_remote()（可变
+    // 借用），f = &app.fp 的不可变借用会活到闭包结束，两者冲突（E0500）。
+    let (score, level) = risk_score(&app.fp);
     let color = p.risk(score);
-    let tripped = f.risk_items().iter().filter(|i| i.score >= 0.25).count();
+    let tripped = app
+        .fp
+        .risk_items()
+        .iter()
+        .filter(|i| i.score >= 0.25)
+        .count();
+    let tz_id = app.fp.tz_id.clone();
+    let tz_color = match app.fp.tz_tier() {
+        TzTier::Full => p.danger,
+        TzTier::Partial => p.warn,
+        TzTier::None => p.ok,
+    };
+    let proxy_like = app.fp.proxy_like_base_url;
+    let bu = match &app.fp.base_url {
+        Some(u) => truncate(
+            u.trim_start_matches("https://")
+                .trim_start_matches("http://"),
+            24,
+        ),
+        None => "未设置".into(),
+    };
 
     egui::Frame::NONE
         .fill(p.panel)
@@ -849,7 +918,7 @@ fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            // 标题行：小标 + 右侧状态胶囊
+            // 标题行：小标 + 右侧状态胶囊与出口侧查询入口
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("指纹风险").size(10.0).color(p.fg_mute));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -857,6 +926,24 @@ fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                         status_pill(ui, p, &format!("{} 项未规避", tripped), p.danger);
                     } else {
                         status_pill(ui, p, "已规避", p.ok);
+                    }
+                    // 出口侧估算入口（懒加载，点击才请求；结果进读数卡）
+                    let rbtn = egui::Button::new(
+                        egui::RichText::new(if app.remote_busy { "查询中…" } else { "出口侧 ›" })
+                            .size(10.0)
+                            .color(p.accent),
+                    )
+                    .fill(egui::Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::NONE);
+                    if ui
+                        .add(rbtn)
+                        .on_hover_text(
+                            "查询出口 IP 侧的风险估算（FuckClaude 公开接口）\n基于出口 IP 与请求头，与本机读数口径不同",
+                        )
+                        .clicked()
+                        && !app.remote_busy
+                    {
+                        app.request_remote();
                     }
                 });
             });
@@ -881,34 +968,17 @@ fn draw_hero(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             ui.add_space(7.0);
 
             // 迷你瓦片 ×2：两处最需要盯着的特征
-            let tz_color = match f.tz_tier() {
-                TzTier::Full => p.danger,
-                TzTier::Partial => p.warn,
-                TzTier::None => p.ok,
-            };
-            let bu = match &f.base_url {
-                Some(u) => truncate(
-                    u.trim_start_matches("https://")
-                        .trim_start_matches("http://"),
-                    24,
-                ),
-                None => "未设置".into(),
-            };
             let tw = (ui.available_width() - 6.0) / 2.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                mini_tile(ui, p, tw, "当前时区", &truncate(&f.tz_id, 22), tz_color);
+                mini_tile(ui, p, tw, "当前时区", &truncate(&tz_id, 22), tz_color);
                 mini_tile(
                     ui,
                     p,
                     tw,
                     "中转地址",
                     &bu,
-                    if f.proxy_like_base_url {
-                        p.danger
-                    } else {
-                        p.ok
-                    },
+                    if proxy_like { p.danger } else { p.ok },
                 );
             });
         });
@@ -1032,6 +1102,29 @@ fn draw_readings(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             );
             fingerprint_row(ui, p, "字体环境", &font_txt, Some(font_color));
             fingerprint_row(ui, p, "国产浏览器", &browser_txt, Some(browser_color));
+            // 出口侧估算：本机观察不到的 IP/请求头视角（点击标题行按钮查询）
+            let (remote_txt, remote_color) = match &app.remote {
+                None => ("未查询（点右上「出口侧 ›」）".to_string(), p.fg_mute),
+                Some(Err(e)) => (format!("查询失败：{e}"), p.warn),
+                Some(Ok(est)) => {
+                    let c = match est.band.as_str() {
+                        "high" => p.danger,
+                        "medium" => p.warn,
+                        _ => p.ok,
+                    };
+                    (
+                        format!(
+                            "{} · Geo {} · 覆盖 {}/{}",
+                            est.headline(),
+                            est.geo_summary(),
+                            est.measured_weight,
+                            est.total_weight
+                        ),
+                        c,
+                    )
+                }
+            };
+            fingerprint_row(ui, p, "出口侧", &remote_txt, Some(remote_color));
             // 只读展示（本工具不改）：中性墨色，不带状态点
             fingerprint_row(ui, p, "浏览器语言", &f.browser_lang, None);
             fingerprint_row(ui, p, "界面语言", &f.ui_langs, None);

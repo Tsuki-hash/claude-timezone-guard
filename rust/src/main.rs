@@ -19,6 +19,7 @@
 
 mod browser;
 mod core;
+mod remote;
 mod ui;
 
 use crate::browser::{load_backup, restore_browser_langs, save_backup, set_browser_language};
@@ -113,7 +114,9 @@ fn main() -> Result<(), eframe::Error> {
     if args.len() > 1 {
         match args[1].as_str() {
             "status" => {
-                cli_status();
+                // --remote：追加出口侧估算（调 FuckClaude 公开 /api/check）
+                let remote = args.iter().skip(2).any(|a| a == "--remote");
+                cli_status(remote);
                 std::process::exit(0);
             }
             "apply" => match args.get(2) {
@@ -186,6 +189,7 @@ fn cli_usage() {
     eprintln!();
     eprintln!("用法:");
     eprintln!("  claude-fingerprint status              查看当前指纹与风险分");
+    eprintln!("  claude-fingerprint status --remote     同上，并追加出口侧风险估算");
     eprintln!("  claude-fingerprint apply <画像>        切换时区 / 区域语言 / 浏览器语言");
     eprintln!("  claude-fingerprint restore             还原到切换前的状态");
     eprintln!("  claude-fingerprint                     不带参数 = 启动图形界面");
@@ -214,7 +218,7 @@ fn parse_profile(s: &str) -> Option<Profile> {
     }
 }
 
-fn cli_status() {
+fn cli_status(remote: bool) {
     let f = read_fingerprint();
     let (s, l) = risk_score(&f);
     println!("时区        : {}", f.tz_id);
@@ -280,6 +284,28 @@ fn cli_status() {
     println!("Edge   运行 : {}", f.edge_running);
     println!("风险分      : {}/{}  {}", s, RISK_MAX, l);
     println!("              （只反映本机可观测项，不含出口 IP / DNS / WebRTC）");
+
+    // 出口侧估算：调 FuckClaude 公开接口，补上本机观察不到的 IP/请求头视角。
+    // 失败只影响这一节，不影响 status 其余输出。
+    if remote {
+        println!("出口侧估算  : 查询中（{}）…", remote::REMOTE_CHECK_URL);
+        match remote::fetch_remote_estimate() {
+            Ok(est) => {
+                println!(
+                    "              {} · 覆盖 {}/{}",
+                    est.headline(),
+                    est.measured_weight,
+                    est.total_weight
+                );
+                println!("              Geo: {}", est.geo_summary());
+                if !est.message.is_empty() {
+                    println!("              {}", est.message);
+                }
+                println!("              {}（与本机读数口径不同）", est.band);
+            }
+            Err(e) => println!("              远端不可达: {e}"),
+        }
+    }
 }
 
 fn cli_apply(p: Profile) -> i32 {

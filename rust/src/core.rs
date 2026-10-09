@@ -222,6 +222,62 @@ pub enum TzTier {
     None,
 }
 
+/// 语言暴露分级（对齐 FuckClaude `scoreLanguages` 的语义，P1-2）：
+/// - `zh-cn` / 含 `hans` = 1.0；
+/// - `zh-hk` / `zh-mo` / 其他繁体 = 0.5（受限地区部分风险）；
+/// - `zh-tw`（含 hant+tw）= 0（Anthropic 完全支持台湾）；
+/// - 裸 `zh`：前面没有繁体偏好时按简体算（1.0），是繁体后的浏览器回退则忽略；
+/// - 有简体但不是首选 = 0.7；只有弱相关 zh 变体 = 0.4。
+pub fn score_language_graded(langs: &[&str]) -> f32 {
+    let list: Vec<String> = langs
+        .iter()
+        .map(|l| l.trim().to_lowercase())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let is_tw = |l: &str| l.starts_with("zh-tw") || (l.contains("hant") && l.contains("tw"));
+    let is_hkmo = |l: &str| l.starts_with("zh-hk") || l.starts_with("zh-mo");
+    let is_trad = |l: &str| is_tw(l) || is_hkmo(l) || l.contains("hant");
+    let first_trad = list.iter().position(|l| is_trad(l));
+    let is_hans = |l: &str, i: usize| {
+        l.starts_with("zh-cn")
+            || l.contains("hans")
+            || (l == "zh" && first_trad.is_none_or(|ft| i < ft))
+    };
+
+    // 台湾标签整条剔除；裸 zh 若是繁体偏好后的回退也剔除
+    let kept: Vec<(usize, &String)> = list
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| !is_tw(l) && !(l.as_str() == "zh" && first_trad.is_some_and(|ft| *i > ft)))
+        .collect();
+
+    let Some((pi, primary)) = kept.first() else {
+        return 0.0;
+    };
+    if is_hans(primary, *pi) {
+        return 1.0;
+    }
+    if is_hkmo(primary) || primary.contains("hant") {
+        return 0.5;
+    }
+    if kept.iter().any(|(i, l)| is_hans(l, *i)) {
+        return 0.7;
+    }
+    if kept.iter().any(|(_, l)| l.starts_with("zh")) {
+        return 0.4;
+    }
+    0.0
+}
+
+/// 区域语言风险项的命中度：区域格式（culture）与浏览器语言（Chrome 配置的
+/// 语言列表）任一暴露即暴露，取两者较高者。
+fn lang_exposure_score(culture: &str, browser_lang: &str) -> f32 {
+    let culture_score = score_language_graded(&[culture]);
+    let browser_list: Vec<&str> = browser_lang.split(',').map(str::trim).collect();
+    let browser_score = score_language_graded(&browser_list);
+    culture_score.max(browser_score)
+}
+
 impl Fingerprint {
     pub fn tz_tier(&self) -> TzTier {
         if self.tz_id != "China Standard Time" {
@@ -361,7 +417,7 @@ impl Fingerprint {
             },
             RiskItem {
                 weight: 10,
-                score: if self.culture == "zh-CN" { 1.0 } else { 0.0 },
+                score: lang_exposure_score(&self.culture, &self.browser_lang),
             },
             RiskItem {
                 weight: 5,
@@ -1538,6 +1594,39 @@ mod tests {
         assert!(CN_BROWSER_TOKENS
             .iter()
             .any(|t| browser.contains(&t.to_lowercase())));
+    }
+
+    // ---------- 语言分级（P1-2） ----------
+
+    #[test]
+    fn 语言分级_简繁与港澳台语义() {
+        let g = |langs: &[&str]| score_language_graded(langs);
+        assert_eq!(g(&["zh-CN"]), 1.0);
+        assert_eq!(g(&["zh"]), 1.0); // 裸 zh 前无繁体偏好 = 简体
+        assert_eq!(g(&["en-us", "zh"]), 0.7); // 有简体但非首选
+        assert_eq!(g(&["zh-tw"]), 0.0); // 台湾：Anthropic 完全支持
+        assert_eq!(g(&["zh-hant-tw"]), 0.0);
+        assert_eq!(g(&["zh-hk"]), 0.5); // 港澳：受限地区部分风险
+        assert_eq!(g(&["zh-hant"]), 0.5); // 不带地区的繁体，无法排除港澳
+        assert_eq!(g(&["en-us"]), 0.0);
+        // 裸 zh 是繁体偏好后的浏览器回退：忽略
+        assert_eq!(g(&["zh-TW", "zh", "en"]), 0.0);
+        // 但列表里的简体条目（zh-CN）依然是真实的暴露，即便首选是 zh-TW
+        assert_eq!(g(&["zh-tw", "zh-cn"]), 1.0);
+    }
+
+    #[test]
+    fn 语言分级_区域格式与浏览器语言取较高者() {
+        // 区域格式 en-SG + 浏览器语言 zh-CN（非首选）：次要暴露 0.7
+        assert!((lang_exposure_score("en-SG", "en-US,zh-CN") - 0.7).abs() < 1e-6);
+        // 区域格式 zh-CN：恒暴露
+        assert!((lang_exposure_score("zh-CN", "en-US") - 1.0).abs() < 1e-6);
+        // 两者都干净
+        assert!((lang_exposure_score("en-SG", "en-US") - 0.0).abs() < 1e-6);
+        // 区域格式 zh-TW（0）但浏览器里挂着 zh-CN（0.7）：取浏览器侧
+        assert!((lang_exposure_score("zh-TW", "en-US,zh-CN") - 0.7).abs() < 1e-6);
+        // 「未检测到」占位串不是语言标签
+        assert!((lang_exposure_score("en-SG", "未检测到") - 0.0).abs() < 1e-6);
     }
 
     // ---------- 北美夏令时边界 ----------
