@@ -206,9 +206,47 @@ fn cli_status() {
     println!("系统区域    : ACP={} Geo={}", f.sys_locale, f.geo_id);
     println!("浏览器语言  : {}", f.browser_lang);
     println!("界面语言    : {}  (只读，本工具不改)", f.ui_langs);
+
+    // 原文第二条路径：本工具改不了它，所以更要如实报出来
+    match &f.base_url {
+        Some(u) => {
+            println!(
+                "中转地址    : {}{}",
+                u,
+                if f.proxy_like_base_url {
+                    "  ← 非官方地址，原文点名的识别路径之一"
+                } else {
+                    "  (官方)"
+                }
+            );
+            println!("              {}", f.base_url_hint);
+            if f.proxy_like_base_url {
+                println!(
+                    "              修法: 把该值改为空或 https://api.anthropic.com（本工具不代改）"
+                );
+                println!("              提醒: 同一个文件里通常还有 ANTHROPIC_AUTH_TOKEN 等密钥，");
+                println!("                    分享截图/贴日志前请先打码。");
+            }
+        }
+        None => println!("中转地址    : 未设置（走官方直连）"),
+    }
+    match &f.ntp_server {
+        Some(s) => println!(
+            "NTP 校时    : {}{}",
+            s,
+            if f.ntp_leaks {
+                "  ← 国内校时服务器会暴露真实时区"
+            } else {
+                ""
+            }
+        ),
+        None => println!("NTP 校时    : 未配置"),
+    }
+
     println!("Chrome 运行 : {}", f.chrome_running);
     println!("Edge   运行 : {}", f.edge_running);
-    println!("风险分      : {}/65  {}", s, l);
+    println!("风险分      : {}/{}  {}", s, RISK_MAX, l);
+    println!("              （只反映本机可观测项，不含出口 IP / DNS / WebRTC）");
 }
 
 fn cli_apply(p: Profile) -> i32 {

@@ -190,12 +190,25 @@ pub struct Fingerprint {
     pub ui_langs: String,
     pub chrome_running: bool,
     pub edge_running: bool,
+    /// ANTHROPIC_BASE_URL 的生效值（None = 未设置）。
+    /// 原文点名的第二条识别路径；本工具**不改**它，只如实展示并计分。
+    pub base_url: Option<String>,
+    /// base_url 是否指向非官方地址（即经过第三方中转）
+    pub proxy_like_base_url: bool,
+    /// base_url 的来源（文件路径或"环境变量"），仅用于告诉用户改哪里
+    pub base_url_hint: String,
+    /// Windows 时间服务配置的 NTP 服务器（None = 未配置）
+    pub ntp_server: Option<String>,
+    /// NTP 是否看起来是国内的（= 校时会泄露真实时区）
+    pub ntp_leaks: bool,
 }
 
 pub fn read_fingerprint() -> Fingerprint {
     let tz_id = get_timezone();
     let culture = get_culture();
     let browser_lang = crate::browser::read_chrome_lang().unwrap_or_else(|| "未检测到".into());
+    let base_url = read_base_url();
+    let (ntp_leaks, _) = ntp_risk(get_ntp_server().as_deref());
 
     Fingerprint {
         is_china_tz: tz_id == "China Standard Time",
@@ -220,24 +233,40 @@ pub fn read_fingerprint() -> Fingerprint {
         ui_langs: read_ui_languages().unwrap_or_else(|| "未知".into()),
         chrome_running: process_running("chrome.exe"),
         edge_running: process_running("msedge.exe"),
+        proxy_like_base_url: is_proxy_like_base_url(base_url.as_deref()),
+        base_url,
+        base_url_hint: base_url_hint(),
+        ntp_server: get_ntp_server(),
+        ntp_leaks,
     }
 }
 
 /// 指纹风险评分。
-/// 只统计**本工具实际能改变**的项（时区 + 区域语言），分母随之改为 65。
-/// ACP(系统代码页) 与 Nation(区域位置) 工具不写（ACP 要管理员+重启），
-/// 若把它们算进分数，切换后分数永远降不到 0，会与界面上的「已规避」自相矛盾。
+///
+/// 分母 100，覆盖四条本工具**能观察到**的本地特征路径：
+///   时区 35 + 代理中转地址(ANTHROPIC_BASE_URL) 40 + 区域格式 15 + 直连 NTP 10
+///
+/// 为什么把 BASE_URL 给到最高的 40：原文点名的两条与出口 IP 无关的路径里，
+/// 它是最直接的一条 —— 指向中转站等于自己报出用了什么服务，而且它比时区
+/// **更容易修**（改一个环境变量即可）。
+///
+/// ACP(系统代码页) 与 Nation(区域位置) 仍不计入：前者要管理员+重启才能改，
+/// 计进去会让分数永远降不到 0，与界面上的结论自相矛盾。
+///
+/// 注意：**分数为 0 不等于"在 Claude 眼里干净"** —— 出口 IP、DNS、WebRTC
+/// 都不在本地可观测范围内。界面文案必须如实反映这一点。
 pub fn risk_score(f: &Fingerprint) -> (u32, &'static str) {
-    let mut s = 0;
-    if f.is_china_tz {
-        s += 50;
-    }
-    if f.culture == "zh-CN" {
-        s += 15;
-    }
-    let level = if s >= 50 {
+    let s: u32 = f
+        .risk_items()
+        .iter()
+        .filter(|i| i.tripped)
+        .map(|i| i.weight)
+        .sum();
+
+    // 阈值按新分母重新标定：单项最高 40，最严重组合（时区+中转）= 75
+    let level = if s >= 60 {
         "高危"
-    } else if s >= 20 {
+    } else if s >= 25 {
         "中危"
     } else if s > 0 {
         "低危"
@@ -245,6 +274,241 @@ pub fn risk_score(f: &Fingerprint) -> (u32, &'static str) {
         "安全"
     };
     (s, level)
+}
+
+/// 评分上限（分母）。界面/CLI 都应当引用它而不是写死数字，
+/// 否则将来调整权重时会出现"分数超过分母"或文案对不上。
+pub const RISK_MAX: u32 = 100;
+
+/// 一条可观察的风险项。`tripped` 为真时计入分数。
+#[derive(Clone, Copy, Debug)]
+pub struct RiskItem {
+    pub weight: u32,
+    pub tripped: bool,
+}
+
+impl Fingerprint {
+    /// 当前命中的风险项（顺序与权重固定，便于界面稳定展示与单测断言）
+    pub fn risk_items(&self) -> [RiskItem; 4] {
+        [
+            RiskItem {
+                weight: 35,
+                tripped: self.is_china_tz,
+            },
+            RiskItem {
+                weight: 40,
+                tripped: self.proxy_like_base_url,
+            },
+            RiskItem {
+                weight: 15,
+                tripped: self.culture == "zh-CN",
+            },
+            RiskItem {
+                weight: 10,
+                tripped: self.ntp_leaks,
+            },
+        ]
+    }
+}
+
+// ============================================================
+// 风险项 2：ANTHROPIC_BASE_URL（原文第二条识别路径）
+// ============================================================
+/// 官方地址。只有指向这里（或不设置）才不算暴露。
+pub const OFFICIAL_BASE_URL: &str = "api.anthropic.com";
+
+/// 判定 base_url 是否"像中转站"。
+///
+/// 语义与命名都很保守：我们**无法**内置那份混淆过的域名名单（原文说它
+/// base64+XOR、约 147 项，而且会变），所以不做"是否在黑名单上"的判断。
+/// 这里只回答一个能可靠回答的问题：**它是不是官方地址**。
+/// 凡是非空、且主机不是 `api.anthropic.com` 的，一律视为"经过第三方"，
+/// 由用户自己去确认那个中转站是否在名单里。
+///
+/// 空值 / 只有空白 → 视为未设置（按官方直连处理）。
+pub fn is_proxy_like_base_url(raw: Option<&str>) -> bool {
+    let Some(v) = raw else { return false };
+    let v = v.trim();
+    if v.is_empty() {
+        return false;
+    }
+    match host_of(v) {
+        Some(h) => !h.eq_ignore_ascii_case(OFFICIAL_BASE_URL),
+        // 有值但解析不出主机名：宁可提示用户去看一眼，也不当作安全
+        None => true,
+    }
+}
+
+/// 从 URL / host[:port] / host/path 里取出主机名（小写，去端口与用户信息）
+fn host_of(v: &str) -> Option<String> {
+    let after_scheme = match v.find("://") {
+        Some(i) => &v[i + 3..],
+        None => v,
+    };
+    // 去掉路径 / 查询 / 片段
+    let hostport = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    // 去掉 user:pass@
+    let hostport = match hostport.rfind('@') {
+        Some(i) => &hostport[i + 1..],
+        None => hostport,
+    };
+    let host = hostport.split(':').next().unwrap_or_default().trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_ascii_lowercase())
+    }
+}
+
+/// 读取 ANTHROPIC_BASE_URL 的生效值。
+///
+/// 两个来源（只查环境变量会漏报）：
+///   1. 环境变量（进程级，最直接）
+///   2. `~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL` —— Claude Code
+///      支持在设置文件里注入环境变量，那种配置不会出现在本进程的环境块里。
+///      实测这是最常见的配置方式（本机就是这一种）。
+pub fn read_base_url() -> Option<String> {
+    if let Ok(v) = std::env::var("ANTHROPIC_BASE_URL") {
+        if !v.trim().is_empty() {
+            return Some(v);
+        }
+    }
+    read_base_url_from_settings()
+}
+
+/// 找到设置了 ANTHROPIC_BASE_URL 的那个文件（仅用于告诉用户"改哪里"）
+pub fn base_url_settings_path() -> Option<PathBuf> {
+    let home = std::env::var("USERPROFILE").ok()?;
+    for name in [r".claude\settings.json", ".claude.json"] {
+        let p = PathBuf::from(&home).join(name);
+        let Ok(txt) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) else {
+            continue;
+        };
+        let has = v
+            .get("env")
+            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+            .and_then(|s| s.as_str())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if has {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn read_base_url_from_settings() -> Option<String> {
+    let p = base_url_settings_path()?;
+    let txt = std::fs::read_to_string(&p).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&txt).ok()?;
+    let s = v
+        .get("env")?
+        .get("ANTHROPIC_BASE_URL")?
+        .as_str()?
+        .trim()
+        .to_string();
+    if s.is_empty() {
+        None
+    } else {
+        // 过一遍打码函数：base_url 理论上不含密钥，但它是从**同时存放密钥的文件**
+        // 里读出来的，万一用户把 token 拼进了 URL（`https://token@relay/...`），
+        // 这里就是唯一能拦住它被打印到屏幕上的地方。
+        Some(redact_url_userinfo(&s))
+    }
+}
+
+/// 去掉 URL 里的 `user:pass@` 部分（可以含密钥），其余原样保留。
+/// 与 `redact_secret` 的分工：这个用于**仍要展示完整主机名**的场景。
+pub fn redact_url_userinfo(u: &str) -> String {
+    match (u.find("://"), u.find('@')) {
+        (Some(scheme_end), Some(at)) if at > scheme_end => {
+            let (head, tail) = u.split_at(scheme_end + 3);
+            format!("{}***@{}", head, &tail[at - (scheme_end + 3) + 1..])
+        }
+        _ => u.to_string(),
+    }
+}
+
+/// 把敏感值打码后再展示。
+///
+/// 为什么需要：读 `settings.json` 的 `env` 段时，同一段里通常还放着
+/// `ANTHROPIC_AUTH_TOKEN` 之类的密钥。本工具只取 base_url，但**只要有任何一处
+/// 把整段 env 打印出来，密钥就会随日志落到屏幕、剪贴板或截图里**。
+/// 这里统一提供打码函数，凡展示来自该文件的字符串一律先过它。
+pub fn redact_secret(v: &str) -> String {
+    let n = v.chars().count();
+    if n <= 8 {
+        return "*".repeat(n);
+    }
+    let head: String = v.chars().take(4).collect();
+    format!("{}…(已打码，共 {} 字符)", head, n)
+}
+
+/// 告诉用户"这个值是从哪读到的"，方便他自己去改
+pub fn base_url_hint() -> String {
+    match base_url_settings_path() {
+        Some(p) => format!("来源: {}", p.display()),
+        None => "来源: 环境变量 ANTHROPIC_BASE_URL".into(),
+    }
+}
+
+// ============================================================
+// 风险项 4：NTP 直连（原文方案一点名的时区泄露口）
+// ============================================================
+/// Windows 时间服务的 NTP 服务器主机名。
+pub fn get_ntp_server() -> Option<String> {
+    let raw = read_reg_str(
+        winreg::enums::HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Services\W32Time\Parameters",
+        "NtpServer",
+    )?;
+    // 形如 `time.windows.com,0x9`：逗号后是标志位，主机名在前
+    let host = raw.split(',').next().unwrap_or_default().trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+/// NTP 服务器是否"像国内的"。
+///
+/// 为什么算风险：系统校时会向这台服务器暴露你的真实时区（原文方案一专门
+/// 讲了这条），它若直连国内地址，代理出口再干净也白搭。
+///
+/// 判定只依据域名，**不解析 DNS、不发任何网络请求** —— 本工具全程离线，
+/// 这一点必须保持。
+pub fn ntp_looks_domestic(server: &str) -> bool {
+    let s = server.to_ascii_lowercase();
+    const CN_SUFFIXES: &[&str] = &[
+        ".cn",
+        ".com.cn",
+        ".net.cn",
+        ".org.cn",
+        "aliyun.com",
+        "tencent.com",
+        "cn.pool.ntp.org",
+        "ntp.ntsc.ac.cn",
+        "time.edu.cn",
+    ];
+    CN_SUFFIXES.iter().any(|suf| {
+        // 后缀匹配必须落在标签边界上，避免 "evilcn.com" 命中 ".cn"
+        s.ends_with(suf) || s.contains(&format!(".{}", suf.trim_start_matches('.')))
+    })
+}
+
+/// 判定当前 NTP 配置是否构成风险：没配 NTP（None）不算；配了国内地址才算。
+pub fn ntp_risk(server: Option<&str>) -> (bool, String) {
+    match server {
+        None => (false, "未配置".into()),
+        Some(s) => (ntp_looks_domestic(s), s.to_string()),
+    }
 }
 
 // ============================================================
@@ -671,13 +935,19 @@ mod tests {
             ui_langs: String::new(),
             chrome_running: false,
             edge_running: false,
+            base_url: None,
+            proxy_like_base_url: false,
+            base_url_hint: String::new(),
+            ntp_server: None,
+            ntp_leaks: false,
         }
     }
 
     #[test]
     fn 风险分_中国大陆全中为高危() {
+        // 时区 35 + 区域格式 15 = 50（没有中转、没有国内 NTP）
         let (s, l) = risk_score(&fp("China Standard Time", "zh-CN"));
-        assert_eq!((s, l), (65, "高危"));
+        assert_eq!((s, l), (50, "中危"));
     }
 
     #[test]
@@ -688,23 +958,205 @@ mod tests {
 
     #[test]
     fn 风险分_只中一项时分级正确() {
-        // 只时区是中国
+        // 只时区是中国：35
         assert_eq!(
             risk_score(&fp("China Standard Time", "en-US")),
-            (50, "高危")
+            (35, "中危")
         );
-        // 只区域格式是 zh-CN
+        // 只区域格式是 zh-CN：15
         assert_eq!(
             risk_score(&fp("Singapore Standard Time", "zh-CN")),
             (15, "低危")
         );
+        // 只 NTP 是国内：10
+        let mut ntp_only = fp("Singapore Standard Time", "en-SG");
+        ntp_only.ntp_leaks = true;
+        assert_eq!(risk_score(&ntp_only), (10, "低危"));
     }
 
     #[test]
     fn 风险分_分数不超过自己的分母() {
-        // 界面写死了 "/65"；分数一旦超过分母就成了 bug
+        // 界面/CLI 都引用 RISK_MAX；分数一旦超过分母就是 bug
         let (s, _) = risk_score(&fp("China Standard Time", "zh-CN"));
-        assert!(s <= 65, "得分 {} 超过了界面标注的分母 65", s);
+        assert!(s <= RISK_MAX, "得分 {} 超过了分母 {}", s, RISK_MAX);
+        // 四项全中也不能超
+        let mut worst = fp("China Standard Time", "zh-CN");
+        worst.proxy_like_base_url = true;
+        worst.ntp_leaks = true;
+        let (s2, l2) = risk_score(&worst);
+        assert!(s2 <= RISK_MAX, "四项全中得分 {} 超过分母", s2);
+        assert_eq!(l2, "高危");
+    }
+
+    #[test]
+    fn 风险分_各权重加起来正好等于分母() {
+        // 保证"四项全中 = 满分"，否则分母就没有意义
+        let mut worst = fp("China Standard Time", "zh-CN");
+        worst.proxy_like_base_url = true;
+        worst.ntp_leaks = true;
+        let (s, _) = risk_score(&worst);
+        assert_eq!(s, RISK_MAX, "四项全中应等于分母");
+    }
+
+    // ---------- ANTHROPIC_BASE_URL ----------
+
+    #[test]
+    fn base_url_未设置或空值不算风险() {
+        assert!(!is_proxy_like_base_url(None));
+        assert!(!is_proxy_like_base_url(Some("")));
+        assert!(!is_proxy_like_base_url(Some("   ")));
+    }
+
+    #[test]
+    fn base_url_官方地址的各种写法都不算风险() {
+        for ok in [
+            "https://api.anthropic.com",
+            "https://api.anthropic.com/",
+            "https://api.anthropic.com/v1/messages",
+            "http://api.anthropic.com:443",
+            "https://API.ANTHROPIC.COM",
+            "api.anthropic.com",
+        ] {
+            assert!(
+                !is_proxy_like_base_url(Some(ok)),
+                "官方地址被误判为风险: {:?}",
+                ok
+            );
+        }
+    }
+
+    #[test]
+    fn base_url_中转站会被识别() {
+        for bad in [
+            "https://relay.example.com",
+            "https://api.openai-proxy.cn/v1",
+            "https://my-relay.workers.dev",
+            "http://192.168.1.10:8080",
+            "https://user:pass@relay.example.com/v1",
+            // 不是官方的相似域名不能放过
+            "https://api.anthropic.com.evil.com",
+            "https://evil-api.anthropic.com.attacker.net",
+        ] {
+            assert!(
+                is_proxy_like_base_url(Some(bad)),
+                "中转地址未被识别: {:?}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn base_url_相似域名不能被当成官方() {
+        // 逐字符比较主机名，前缀/后缀相似都不算官方
+        assert!(is_proxy_like_base_url(Some("https://notapi.anthropic.com")));
+        assert!(is_proxy_like_base_url(Some("https://api.anthropic.com.cn")));
+        assert!(is_proxy_like_base_url(Some("https://xapi.anthropic.com")));
+    }
+
+    // ---------- 密钥打码 ----------
+
+    #[test]
+    fn 打码后不再包含原文() {
+        let secret = "sk-7EXAMPLE-REDACTED-000000";
+        let masked = redact_secret(secret);
+        assert!(!masked.contains(secret), "打码后仍含完整密钥");
+        assert!(masked.contains("sk-7"), "应保留少量可识别前缀");
+        assert!(masked.contains(&secret.chars().count().to_string()));
+    }
+
+    #[test]
+    fn 短字符串整体打码() {
+        assert_eq!(redact_secret("abc"), "***");
+        assert_eq!(redact_secret(""), "");
+        assert_eq!(redact_secret("12345678"), "********");
+    }
+
+    #[test]
+    fn url_里的用户信息会被抹掉() {
+        // 用户可能把 token 拼进 URL；这一处是唯一拦住它被打印的地方
+        let u = "https://sk-secret-token@relay.example.com/v1";
+        let out = redact_url_userinfo(u);
+        assert!(!out.contains("sk-secret-token"), "token 未被抹掉: {}", out);
+        assert!(out.contains("relay.example.com"), "主机名应保留: {}", out);
+        assert_eq!(out, "https://***@relay.example.com/v1", "抹掉后应保持可读");
+
+        // 没有用户信息的 URL 原样返回
+        for ok in [
+            "https://api.anthropic.com/v1",
+            "https://relay.example.com",
+            "not-a-url",
+        ] {
+            assert_eq!(redact_url_userinfo(ok), ok, "不应改动 {:?}", ok);
+        }
+    }
+
+    // ---------- NTP ----------
+
+    #[test]
+    fn ntp_国内服务器会被标记() {
+        for bad in [
+            "ntp.aliyun.com",
+            "ntp1.aliyun.com",
+            "time.tencent.com",
+            "cn.pool.ntp.org",
+            "ntp.ntsc.ac.cn",
+            "210.72.145.44",
+            "s1b.time.edu.cn",
+        ] {
+            // 注意 210.72.145.44 是纯 IP，无法按域名判断 —— 见下一条测试说明
+            let got = ntp_looks_domestic(bad);
+            if bad == "210.72.145.44" {
+                assert!(!got, "纯 IP 不做判断（不能靠猜），实际: {}", got);
+            } else {
+                assert!(got, "国内 NTP 未被识别: {:?}", bad);
+            }
+        }
+    }
+
+    #[test]
+    fn ntp_国外服务器不会被误判() {
+        for ok in [
+            "time.windows.com",
+            "pool.ntp.org",
+            "time.google.com",
+            "time.cloudflare.com",
+            "ntp.ubuntu.com",
+            // 关键回归：'evilcn.com' 不能因为包含 'cn' 被当成 .cn
+            "evilcn.com",
+            "cname.example.com",
+        ] {
+            assert!(!ntp_looks_domestic(ok), "国外 NTP 被误判: {:?}", ok);
+        }
+    }
+
+    #[test]
+    fn ntp_未配置不算风险() {
+        assert_eq!(ntp_risk(None), (false, "未配置".to_string()));
+        assert_eq!(
+            ntp_risk(Some("time.windows.com")),
+            (false, "time.windows.com".to_string())
+        );
+        assert!(ntp_risk(Some("ntp.aliyun.com")).0);
+    }
+
+    #[test]
+    fn 风险分_只中_base_url_时是中危() {
+        let mut f = fp("Singapore Standard Time", "en-SG");
+        f.proxy_like_base_url = true;
+        // 单靠 base_url（40）就是最高权重的单项，应落入中危区间
+        let (s, l) = risk_score(&f);
+        assert_eq!(s, 40);
+        assert_eq!(l, "中危");
+    }
+
+    #[test]
+    fn 风险分_时区加中转即高危() {
+        // 最典型的"挂了代理但没改时区"画像：时区 35 + 中转 40 = 75
+        let mut f = fp("China Standard Time", "zh-CN");
+        f.proxy_like_base_url = true;
+        let (s, l) = risk_score(&f);
+        assert_eq!(s, 90); // 35 + 40 + 15
+        assert_eq!(l, "高危");
     }
 
     // ---------- 北美夏令时边界 ----------

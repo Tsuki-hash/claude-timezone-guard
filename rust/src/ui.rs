@@ -489,6 +489,8 @@ impl eframe::App for App {
                 draw_status_panel(ui, self, p);
                 ui.add_space(11.0);
 
+                draw_advice(ui, self, p);
+
                 draw_exit_selector(ui, self, p);
                 ui.add_space(11.0);
 
@@ -656,6 +658,58 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
 
             ui.add_space(9.0);
             hairline(ui, p);
+            ui.add_space(7.0);
+
+            // 原文第二条识别路径：本工具不改它，但必须让用户看见它
+            let bu_txt = match &f.base_url {
+                Some(u) => u.clone(),
+                None => "未设置（走官方直连）".into(),
+            };
+            reading(
+                ui,
+                "中转地址",
+                &bu_txt,
+                p,
+                Some(if f.proxy_like_base_url {
+                    p.danger
+                } else {
+                    p.ok
+                }),
+            );
+            if f.proxy_like_base_url {
+                ui.label(
+                    egui::RichText::new(
+                        "⚠ 请求经过第三方地址，这是原文点名的第二条识别路径；且本工具管不了它",
+                    )
+                    .size(9.5)
+                    .color(p.danger),
+                );
+                ui.add_space(2.0);
+            }
+
+            // NTP 校时：原文方案一点名的时区泄露口
+            let ntp_txt = match &f.ntp_server {
+                Some(s) => s.clone(),
+                None => "未配置".into(),
+            };
+            reading(
+                ui,
+                "NTP 校时",
+                &ntp_txt,
+                p,
+                Some(if f.ntp_leaks { p.warn } else { p.ok }),
+            );
+            if f.ntp_leaks {
+                ui.label(
+                    egui::RichText::new("⚠ 直连国内校时服务器，会向它暴露你的真实时区")
+                        .size(9.5)
+                        .color(p.warn),
+                );
+                ui.add_space(2.0);
+            }
+
+            ui.add_space(9.0);
+            hairline(ui, p);
             ui.add_space(8.0);
 
             // 风险读数
@@ -672,13 +726,22 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                             .color(risk_color),
                     );
                     ui.label(
-                        egui::RichText::new(format!("{}/65", score))
+                        egui::RichText::new(format!("{}/{}", score, RISK_MAX))
                             .font(egui::FontId::monospace(15.0))
                             .strong()
                             .color(risk_color),
                     );
                 });
             });
+
+            // 分数为 0 也不等于"安全"：出口 IP / DNS / WebRTC 都不在本地可观测范围。
+            // 这句常驻，避免用户把低分误读成"在 Claude 眼里干净"。
+            ui.add_space(3.0);
+            ui.label(
+                egui::RichText::new("分数只反映本机可观测项 · 不含出口 IP / DNS / WebRTC")
+                    .size(9.5)
+                    .color(p.fg_mute),
+            );
         });
 }
 
@@ -777,6 +840,102 @@ fn exit_card(ui: &mut egui::Ui, app: &mut App, w: f32, key: Profile, p: Palette)
     if resp.clicked() && !app.busy {
         app.switch_to(key);
     }
+}
+
+/// 「待处理」清单 —— 把风险分拆成"哪一项、能不能用本工具解决"。
+///
+/// 存在的意义：分数本身不足以指导行动。`ANTHROPIC_BASE_URL` 与 NTP 是权重最高的
+/// 两项，但**本工具改不了**，必须明确区分"点按钮就能修"和"得你自己动手"，
+/// 否则用户会以为切换完时区就等于分数归零。
+fn draw_advice(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+    let f = &app.fp;
+    let mut rows: Vec<(egui::Color32, String, String)> = Vec::new();
+
+    if f.proxy_like_base_url {
+        rows.push((
+            p.danger,
+            "中转地址".into(),
+            format!(
+                "把 ANTHROPIC_BASE_URL 改成空或官方 api.anthropic.com（本工具改不了）· {}",
+                f.base_url_hint
+            ),
+        ));
+        // 那个文件里通常还放着 ANTHROPIC_AUTH_TOKEN 之类的密钥。
+        // 这里给一个"已打码长这样"的样例，提醒用户贴截图前先处理。
+        rows.push((
+            p.fg_dim,
+            "注意".into(),
+            format!(
+                "该文件通常还含 ANTHROPIC_AUTH_TOKEN 等密钥，分享截图前请打码（形如 {}）",
+                redact_secret("sk-7EXAMPLE-REDACTED-000000")
+            ),
+        ));
+    }
+    if f.ntp_leaks {
+        rows.push((
+            p.warn,
+            "NTP 校时".into(),
+            "把 Windows 时间服务换成境外 NTP，或让 NTP 走代理（本工具改不了）".into(),
+        ));
+    }
+    if f.is_china_tz {
+        rows.push((
+            p.danger,
+            "系统时区".into(),
+            "点下面的「新加坡」或「台北」即可（UTC+8，时钟零差异）".into(),
+        ));
+    }
+    if f.culture == "zh-CN" {
+        rows.push((p.warn, "区域格式".into(), "点任一境外画像时一并修改".into()));
+    }
+
+    if rows.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("✓ 本机可观测项均已规避")
+                    .size(11.0)
+                    .strong()
+                    .color(p.ok),
+            );
+            ui.label(
+                egui::RichText::new("（出口 IP / DNS / WebRTC 仍需自行检查）")
+                    .size(9.5)
+                    .color(p.fg_mute),
+            );
+        });
+        ui.add_space(11.0);
+        return;
+    }
+
+    egui::Frame::NONE
+        .fill(p.well)
+        .stroke(egui::Stroke::new(1.0_f32, p.line))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(12, 9))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(format!("待处理 · {} 项", rows.len()))
+                    .strong()
+                    .size(11.5)
+                    .color(p.fg),
+            );
+            ui.add_space(5.0);
+            for (color, name, how) in rows {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 5.0;
+                    ui.label(
+                        egui::RichText::new(format!("• {}", name))
+                            .size(10.5)
+                            .strong()
+                            .color(color),
+                    );
+                    ui.label(egui::RichText::new(how).size(10.0).color(p.fg_dim));
+                });
+                ui.add_space(2.0);
+            }
+        });
+    ui.add_space(11.0);
 }
 
 fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
