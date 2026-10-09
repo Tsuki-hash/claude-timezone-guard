@@ -206,6 +206,14 @@ impl App {
         self.backup = st;
     }
 
+    /// 重读指纹与备份状态。所有「刷新」入口（状态卡按钮 / 底部按钮 / F5）
+    /// 共用这一个方法，保证指纹、备份状态、日志三项总是一起更新。
+    pub fn refresh_fingerprint(&mut self) {
+        self.fp = read_fingerprint();
+        self.refresh_backup_state();
+        self.push_log("已刷新指纹与备份状态".into(), LogKind::Info);
+    }
+
     fn push_log(&mut self, msg: String, kind: LogKind) {
         self.log.push((msg, kind));
     }
@@ -512,45 +520,45 @@ impl eframe::App for App {
         // 自绘标题栏（替代系统原生标题栏那一行）
         draw_titlebar(ctx, self, p);
 
-        // 内容自然展开（不滚动），若高于当前窗口则把窗口撑高，保证一屏看全
-        let resp = egui::CentralPanel::default()
+        // 整页滚动：内容高于窗口时出滚动条，任何区块都不会被裁掉。
+        // 早先靠"量内容高度 → 把窗口撑高"的自适应，但日志区是弹性高度
+        // （填满剩余空间），量出来的永远是"恰好填满当前窗口"，自适应条件
+        // 永远不触发 —— 小窗口下方的区块直接被裁掉且无法滚动看到。
+        egui::CentralPanel::default()
             .frame(
                 egui::Frame::central_panel(&ctx.style())
                     .fill(p.bg)
                     .inner_margin(egui::Margin::symmetric(18, 16)),
             )
             .show(ctx, |ui| {
-                draw_header(ui, self, p);
-                ui.add_space(11.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        draw_header(ui, p);
+                        ui.add_space(11.0);
 
-                draw_status_panel(ui, self, p);
-                ui.add_space(11.0);
+                        draw_status_panel(ui, self, p);
+                        ui.add_space(11.0);
 
-                draw_advice(ui, self, p);
+                        draw_advice(ui, self, p);
 
-                draw_exit_selector(ui, self, p);
-                ui.add_space(11.0);
+                        draw_exit_selector(ui, self, p);
+                        ui.add_space(11.0);
 
-                draw_restore(ui, self, p);
-                ui.add_space(11.0);
+                        draw_restore(ui, self, p);
+                        ui.add_space(11.0);
 
-                draw_others(ui, self, p);
-                ui.add_space(11.0);
+                        draw_others(ui, self, p);
+                        ui.add_space(11.0);
 
-                draw_log(ui, self, p);
-            })
-            .response
-            .rect
-            .height();
+                        draw_log(ui, self, p);
+                    });
+            });
 
-        let want = resp + 16.0 * 2.0 + 4.0;
-        let cur = ctx.screen_rect().height();
-        let w = ctx.screen_rect().width();
-        // 内容比窗口高 -> 撑大窗口；矮太多 -> 收回。
-        // 上限取屏幕高度，避免高 DPI 下窗口被撑到屏幕外（日志框被切）。
-        let max_h = (cur - 20.0).max(700.0);
-        if (want > cur + 2.0 && want < max_h) || (want < cur - 40.0 && cur > 700.0) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, want)));
+        // F5 手动刷新：挂了代理、改了环境变量或在外面跑了 CLI 之后，
+        // 不用滚动找按钮，直接重读本机状态
+        if ctx.input(|i| i.key_pressed(egui::Key::F5)) && !self.busy {
+            self.refresh_fingerprint();
         }
 
         if self.busy {
@@ -562,32 +570,66 @@ impl eframe::App for App {
 // ============================================================
 // 区块
 // ============================================================
-/// 工具条 —— 应用标识 + 主题切换。
-/// 原生标题栏保留（自绘的在 egui 0.31 上拖拽区会抢按钮，关闭点不到），
-/// 这里只做一条紧凑的内联工具条，让标识和主题切换贴近内容而非散在窗口角落。
+/// 自绘标题栏 —— 应用标识、主题切换与窗口控制（最小化/最大化/关闭）合并为一行。
+/// 窗口为 `with_decorations(false)`，不再有系统标题栏那一行。
 fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
-    // 只画标识与主题按钮；窗口控制交给系统标题栏
     egui::TopBottomPanel::top("titlebar")
         .frame(
             egui::Frame::NONE
                 .fill(p.bg)
-                .inner_margin(egui::Margin::symmetric(18, 6)),
+                .inner_margin(egui::Margin::symmetric(18, 8)),
         )
         .show(ctx, |ui| {
+            // 拖拽 / 双击最大化：对整条标题栏先建一个交互响应。`ui.interact`
+            // 不参与布局，且**后画的控件交互优先**——按钮不会被拖拽区抢点击。
+            // 早先用 allocate_response 先占满矩形，按钮才点不到，于是退回了
+            // 系统标题栏；换 interact 后自绘整行是安全的。
+            let titlebar_rect = ui.max_rect();
+            let drag = ui.interact(
+                titlebar_rect,
+                ui.id().with("titlebar_drag"),
+                egui::Sense::click_and_drag(),
+            );
+            if drag.dragged() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if drag.double_clicked() {
+                let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+
             ui.horizontal(|ui| {
-                // 应用标识：小色块 + 名称
+                ui.set_height(26.0);
+
+                // 左：标识 + 名称
                 let (rect, _) =
                     ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
                 ui.painter()
                     .rect_filled(rect, egui::CornerRadius::same(4), p.sig_sg);
                 ui.label(
                     egui::RichText::new("Claude 指纹切换器")
-                        .size(11.5)
+                        .size(12.5)
                         .strong()
                         .color(p.fg),
                 );
 
+                // 右：主题切换 + 窗口控制
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // 关闭：hover 红，Windows 惯例
+                    if titlebar_button(ui, "✕", p.fg_dim, p.danger, egui::Color32::WHITE) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    // 最大化 / 还原（按当前状态切换图标）
+                    let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                    let max_label = if maximized { "❐" } else { "□" };
+                    if titlebar_button(ui, max_label, p.fg_dim, p.well, p.fg) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                    if titlebar_button(ui, "—", p.fg_dim, p.well, p.fg) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+
+                    ui.add_space(4.0);
                     let (label, hover) = match app.theme {
                         Theme::Dark => ("浅色", "切换到浅色主题"),
                         Theme::Light => ("深色", "切换到深色主题"),
@@ -613,7 +655,35 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
         });
 }
 
-fn draw_header(ui: &mut egui::Ui, app: &mut App, p: Palette) {
+/// 标题栏小按钮（窗口控制用）。hover 高亮要等按钮响应产生后才知道，
+/// 所以底色画在按钮之后、文字补画在底色之上。
+fn titlebar_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    idle_fg: egui::Color32,
+    hover_bg: egui::Color32,
+    hover_fg: egui::Color32,
+) -> bool {
+    let btn = egui::Button::new(egui::RichText::new(label).size(11.0).color(idle_fg))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE)
+        .min_size(egui::vec2(30.0, 22.0));
+    let resp = ui.add(btn);
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(resp.rect, egui::CornerRadius::same(5), hover_bg);
+        ui.painter().text(
+            resp.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(11.0),
+            hover_fg,
+        );
+    }
+    resp.clicked()
+}
+
+fn draw_header(ui: &mut egui::Ui, p: Palette) {
     ui.horizontal(|ui| {
         // 左侧：标题 + 副标题（主题/窗口按钮已移到自绘标题栏）
         ui.vertical(|ui| {
@@ -630,13 +700,14 @@ fn draw_header(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             );
         });
     });
-    let _ = app;
 }
 
 /// 当前状态卡 —— 仪器读数风格：等宽数字 + 细分隔线
 fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
-    let f = &app.fp;
-    let (score, level) = risk_score(f);
+    // 克隆而非借用：卡头新增的「刷新」按钮需要 &mut app，而 f 贯穿整个卡片。
+    // 每帧最多一次、十来个短字符串，开销可忽略。
+    let f = app.fp.clone();
+    let (score, level) = risk_score(&f);
     let risk_color = p.risk(score);
 
     egui::Frame::NONE
@@ -656,10 +727,28 @@ fn draw_status_panel(ui: &mut egui::Ui, app: &mut App, p: Palette) {
                         .color(p.fg),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let (dot, txt) = if f.is_china_tz {
-                        (p.danger, "中国大陆特征")
+                    // 刷新常驻状态卡：改了代理/环境变量、或在外面跑了 CLI 之后，
+                    // 点这里重读，不必滚到底部找按钮
+                    let rbtn =
+                        egui::Button::new(egui::RichText::new("刷新").color(p.fg_dim).size(11.0))
+                            .fill(p.well)
+                            .stroke(egui::Stroke::new(1.0_f32, p.line))
+                            .corner_radius(6.0);
+                    if ui
+                        .add_sized([52.0, 20.0], rbtn)
+                        .on_hover_text("重新读取本机指纹与备份状态（快捷键 F5）")
+                        .clicked()
+                        && !app.busy
+                    {
+                        app.refresh_fingerprint();
+                    }
+                    // 状态点必须看全部风险项：早先只看时区，切了时区但中转地址
+                    // 还挂着时这里亮绿灯"已规避"，与同屏的风险分/待处理清单矛盾
+                    let tripped = f.risk_items().iter().filter(|i| i.tripped).count();
+                    let (dot, txt) = if tripped > 0 {
+                        (p.danger, format!("{} 项特征未规避", tripped))
                     } else {
-                        (p.ok, "已规避")
+                        (p.ok, "已规避".to_string())
                     };
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
@@ -904,7 +993,7 @@ fn draw_advice(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             "注意".into(),
             format!(
                 "该文件通常还含 ANTHROPIC_AUTH_TOKEN 等密钥，分享截图前请打码（形如 {}）",
-                redact_secret("sk-7EXAMPLE-REDACTED-000000")
+                redact_secret("sk-EXAMPLE-0000000000000000000000")
             ),
         ));
     }
@@ -1059,11 +1148,7 @@ fn draw_others(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             .stroke(egui::Stroke::new(1.0_f32, p.line))
             .corner_radius(6.0);
         if ui.add_sized([bw, 28.0], refresh).clicked() {
-            app.fp = read_fingerprint();
-            // 一并重算备份状态：否则在另一个终端跑了 CLI 建好备份后，
-            // GUI 的「一键恢复」不会解锁（必须重启或先做一次切换）。
-            app.refresh_backup_state();
-            app.push_log("已刷新指纹与备份状态".into(), LogKind::Info);
+            app.refresh_fingerprint();
         }
 
         let web = egui::Button::new(egui::RichText::new("检测页").color(p.fg_dim).size(11.0))
@@ -1120,10 +1205,10 @@ fn draw_log(ui: &mut egui::Ui, app: &mut App, p: Palette) {
         .inner_margin(egui::Margin::symmetric(12, 9))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            // 填满剩余高度：内容多时内部滚动，内容少时也不会留一大片空白
-            let avail = ui.available_height().max(76.0);
+            // 固定视口高度 + 内部滚动。不能用 available_height：整页已在
+            // ScrollArea 里，那里的剩余高度是无界的，会把日志框撑到无限高。
             egui::ScrollArea::vertical()
-                .max_height(avail)
+                .max_height(180.0)
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {

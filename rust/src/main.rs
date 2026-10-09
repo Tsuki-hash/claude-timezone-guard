@@ -149,8 +149,11 @@ fn main() -> Result<(), eframe::Error> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([440.0, 700.0])
             .with_min_inner_size([400.0, 620.0])
-            // 保留系统原生标题栏：自绘标题栏在 egui 0.31 上拖拽区与按钮会互相抢占，
-            // 导致关闭/最小化点不到。原生标题栏的"独立一行"用下面的工具条抵消。
+            // 自绘标题栏（含最小化/最大化/关闭），窗口控制与界面融为同一行。
+            // 早先保留原生标题栏，是因为当时的拖拽区实现会抢按钮的点击；
+            // 改用 `ui.interact()` 先建拖拽响应、按钮后画（后画者交互优先）后
+            // 两不误，见 ui.rs 的 draw_titlebar。
+            .with_decorations(false)
             .with_resizable(true),
         ..Default::default()
     };
