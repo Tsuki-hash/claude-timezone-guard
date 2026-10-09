@@ -21,7 +21,7 @@ mod browser;
 mod core;
 mod ui;
 
-use crate::browser::{load_backup, save_backup, set_browser_language};
+use crate::browser::{load_backup, restore_browser_langs, save_backup, set_browser_language};
 use crate::core::*;
 
 /// 隐藏控制台窗口，但**仅当这个控制台是本进程独占时**。
@@ -342,15 +342,34 @@ fn cli_restore() -> i32 {
     if b.ui_langs.is_some() {
         println!("· UI 语言：本工具不再改动（如需还原请在 Windows 语言设置里手动调整）");
     }
-    match &b.browser_lang {
-        Some(l) => {
+    // 浏览器语言：优先用逐 Profile 精确还原（v2 备份）。
+    // 只有旧备份（没有逐 Profile 数据）才退回"单值写全部"的旧行为，并明确告知。
+    // 与切换路径一致：浏览器在运行时先拒绝写入，否则会被浏览器退出时覆盖。
+    if !b.browser_langs.is_empty() || b.browser_lang.is_some() {
+        let running = running_browsers();
+        if !running.is_empty() {
+            println!(
+                "✗ 浏览器正在运行（{}），已跳过浏览器语言还原",
+                running.join(", ")
+            );
+            println!("  请完全退出浏览器后重新运行 restore。");
+            fails += 1;
+        } else if !b.browser_langs.is_empty() {
+            let (blog, bfail) = restore_browser_langs(&b.browser_langs);
+            for line in blog {
+                println!("{}", line);
+            }
+            fails += bfail;
+        } else if let Some(l) = &b.browser_lang {
+            println!("· 这是旧版备份（只有单个语言值），按旧行为写到所有 Profile");
             let (blog, bfail) = set_browser_language(l);
             for line in blog {
                 println!("{}", line);
             }
             fails += bfail;
         }
-        None => println!("· 浏览器语言：备份时未检测到，保持原样"),
+    } else {
+        println!("· 浏览器语言：备份时未检测到，保持原样");
     }
     if fails > 0 {
         println!("✗ 还原完成，但有 {} 项失败", fails);

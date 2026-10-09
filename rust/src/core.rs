@@ -765,9 +765,41 @@ pub fn process_running(name: &str) -> bool {
 
 /// 系统工具绝对路径。Command::new("tzutil") 会按 PATH 搜索，
 /// 用户 PATH 前置目录里的同名 exe 就能劫持（Windows 上经典提权面）。
+///
+/// 目录来源优先用 `GetSystemDirectoryW`（API，不信环境变量），
+/// 只有 API 失败时才退回 `%SystemRoot%`。
 fn sys_tool(name: &str) -> PathBuf {
+    if let Some(dir) = system_directory() {
+        return dir.join(name);
+    }
     let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     PathBuf::from(root).join("System32").join(name)
+}
+
+/// 系统目录（通常是 `C:\Windows\System32`）—— 通过 API 获取，不读环境变量。
+///
+/// 为什么要这样：`SystemRoot` 是进程环境的一部分，任何启动者都能替换它
+/// （CreateProcess 的 lpEnvironment），从而改变本工具**执行哪个 tzutil / tasklist**。
+/// 当前没有提权收益，但这是一条不该留着的口子。
+/// 返回 None 时调用方退回环境变量，所以不会因为 API 异常而完全不可用。
+fn system_directory() -> Option<PathBuf> {
+    #[link(name = "kernel32", kind = "dylib")]
+    extern "system" {
+        fn GetSystemDirectoryW(buf: *mut u16, size: u32) -> u32;
+    }
+    const MAX_PATH: usize = 260;
+    let mut buf = [0u16; MAX_PATH];
+    // 返回值是写入的字符数（不含结尾 NUL）；0 或超出缓冲都算失败
+    let n = unsafe { GetSystemDirectoryW(buf.as_mut_ptr(), MAX_PATH as u32) };
+    if n == 0 || n as usize >= MAX_PATH {
+        return None;
+    }
+    let s = String::from_utf16_lossy(&buf[..n as usize]);
+    if s.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(s))
+    }
 }
 
 // ============================================================

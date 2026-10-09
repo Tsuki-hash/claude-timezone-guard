@@ -126,13 +126,24 @@ claude-fingerprint                     不带参数 = 启动图形界面
 - **浏览器必须先完全退出**：运行中的 Chromium 会在退出时用内存里的配置覆盖磁盘上的 `Preferences`，把我们的改动**静默回滚掉**。所以工具在检测到浏览器正在运行时会**直接跳过**浏览器语言设置并明确提示，而不是先写再提醒你重启。完全退出浏览器后再点一次即可。
 - **`restore` 不还原界面语言**：本工具已不写这个键，所以没有需要还原的东西（旧备份里若记录了该字段，会被忽略并提示）。
 - **还原不删除备份**：`restore` 之后备份文件仍然保留，所以「一键恢复」始终还原到**最初**切换前的状态，而不是上一次切换前。若你想以"当前状态"为新的还原点，请手动删除 `backup.json` 再切换一次。
+- **浏览器语言是逐 Profile 精确还原**：备份会逐个记录每个浏览器的每个 Profile 各自的语言
+  （键形如 `Chrome\Default`），还原时只写回记录过的那些 Profile —— 多 Profile 各自不同语言也
+  不会被抹平。备份里记录过、但现在已经不存在的 Profile 会被跳过并在日志里点名。
+  （v2 之前生成的旧备份只有一个语言值，此时会退回"写到所有 Profile"的旧行为并**明确提示**。）
+- **备份文件是加密的**：`backup.json` 用 **Windows DPAPI（当前用户）** 加密存储，
+  文件里看不到明文时区/语言值。这能挡住"同用户下的其它进程随手替换一份伪造备份"
+  诱导你把特征装回去的做法。注意 DPAPI 不是防同用户的密码学边界 ——
+  同一用户登录会话内的程序仍能解密，它的作用是让伪造文件不再轻易可行。
+  若 DPAPI 不可用，会退化为明文写入（不会因为"加不上锁"就让你失去备份能力）。
+- **备份损坏时会明确告诉你**：界面是三态（没有备份 / 可还原 / 文件损坏）。
+  损坏时 hover 会给出真实原因与处理办法，而不是笼统说"还没有备份"。
 - **浏览器语言的备份/还原是"粗粒度"的**：备份只记录**第一个命中的**浏览器 Profile 的语言值
   （Chrome → Edge → Brave → Chromium → Vivaldi 顺序），还原时却会把该值写到**所有**浏览器的
   **所有** Profile。如果你有多个 Profile 且各自语言不同，还原会把它们统一成同一个值。
   单个 Profile 的原始值另有一份 `.bak` 留在同目录（见下），可用于手动核对。
 - **区域格式映射是白名单**：画像表里没有的 culture 会明确报错，而不是悄悄写成 en-US —— 那会让 `Locale` 和 `LocaleName` 两个注册表值自相矛盾，比直接失败更难排查。
 - **不支持 Firefox**：只处理 Chromium 系浏览器。Firefox 的语言存在 `prefs.js`，机制不同，请自行到 `about:config` 调 `intl.accept_languages`。
-- **备份位置**：`%LOCALAPPDATA%\ClaudeFingerprint\backup.json`（主题偏好在同目录 `theme.txt`）。已有备份时不会被覆盖，始终保留"切换前"的原始状态。
+- **备份位置**：`%LOCALAPPDATA%\ClaudeFingerprint\backup.json`（DPAPI 加密；主题偏好在同目录 `theme.txt`）。已有备份时不会被覆盖，始终保留"切换前"的原始状态。
 - **`.bak` 文件不是自动还原点**：改写浏览器 `Preferences` 前，会在同目录留一份
   `Preferences.<进程号>.bak`。本工具**不会**读它，它只是给你手工核对/恢复用的原始副本。
   它带进程号且每次只写一次，属正常现象，介意可自行删除。
@@ -181,11 +192,11 @@ claude-fingerprint                     不带参数 = 启动图形界面
 
 ```powershell
 cd rust
-cargo test --release      # 35 个纯函数单元测试
+cargo test --release      # 60 个纯函数单元测试
 cargo build --release     # 产物: rust\target\release\claude-fingerprint.exe
 ```
 
-打包成可分发目录（exe + 启动器 + 说明 + LICENSE + SHA256SUMS）：
+打包成可分发目录（exe + 启动器 + 说明 + LICENSE + THIRD-PARTY-LICENSES + SHA256SUMS）：
 
 ```powershell
 # 在仓库根目录执行：
@@ -205,10 +216,10 @@ cargo build --release     # 产物: rust\target\release\claude-fingerprint.exe
 
 - 北美夏令时只实现了 **2007 年起**的美国规则，且只用于界面上的时钟对照条，北美以外的 DST 规则没考虑。时区本身由 Windows 负责，显示时间永远正确。
 - 浏览器语言只改 `intl.accept_languages`，不改 Chromium 的界面语言（`Local State` 里的 `intl.app_locale`）。
-- 浏览器语言**不是逐 Profile 精确还原**（见注意事项）。
 - 时区切换是**系统级**的，会影响机器上所有程序（这正是目的，但请知悉）。
-- 单元测试只覆盖**纯函数**（校验、映射、夏令时边界、风险分）。真正改系统的路径
-  （注册表写入、`tzutil`、`Preferences` 原子写）没有自动化测试，需手工验证。
+- 单元测试只覆盖**纯函数**（校验、映射、夏令时边界、风险分、base64、DPAPI 信封、
+  逐 Profile 备份结构）。真正改系统的路径（注册表写入、`tzutil`、`Preferences` 原子写）
+  没有自动化测试，需手工验证。
 
 ## 🗑️ 卸载与手动还原
 
@@ -247,3 +258,7 @@ Set-Culture zh-CN
   Anthropic 官方证实，仅供参考。
 - 使用者需自行承担使用后果。
 - 许可证：[MIT](../LICENSE)（打包分发时该链接会被改写为同目录的 `LICENSE`）。
+- 第三方依赖：[`THIRD-PARTY-LICENSES.md`](../THIRD-PARTY-LICENSES.md) —— 286 个依赖、
+  8 种许可证、72 份原文。**注意**：依赖里有 **206 个是 Apache-2.0**，其 §4 要求
+  二进制分发时随附许可证副本与保留声明；另外 egui 的默认字体会进二进制，带来
+  OFL-1.1 与 Ubuntu Font Licence 的义务。打包脚本会把这份清单一起放进 dist。

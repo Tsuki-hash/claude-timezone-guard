@@ -5,7 +5,10 @@
 //! 签名元素：时区对照条 —— 一条横向时间轴同时显示北京/当前/目标时区，
 //! 把「时钟零差异」这件抽象的事变成看得见的刻度。
 
-use crate::browser::{load_backup, save_backup, set_browser_language};
+use crate::browser::{
+    backup_state, load_backup, restore_browser_langs, save_backup, set_browser_language,
+    BackupState,
+};
 use crate::core::*;
 use eframe::egui;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -145,7 +148,10 @@ pub struct App {
     pub fp: Fingerprint,
     pub log: Vec<(String, LogKind)>,
     pub busy: bool,
-    pub has_backup: bool,
+    /// 备份状态三态（无 / 可用 / 损坏）。
+    /// 早先用 bool，把"文件损坏"显示成"没有备份"，用户会照提示去"先切换一次"，
+    /// 而真实原因是文件坏了 —— 排查方向完全错。
+    pub backup: BackupState,
     /// 当前在跑的任务的接收端。**不长期持有 Sender** —— 见 poll_tasks 的说明。
     task_rx: Option<Receiver<TaskResult>>,
 }
@@ -159,24 +165,45 @@ impl App {
         let fp = read_fingerprint();
         // 默认浅色（技术文档纸），深色用右上角按钮切换
         let theme = load_theme_pref().unwrap_or(Theme::Light);
+        let backup = backup_state();
         let mut app = Self {
             theme,
             applied_theme: None,
             log: vec![(format!("就绪 · 当前时区 {}", fp.tz_id), LogKind::Info)],
             busy: false,
-            has_backup: load_backup().is_ok(),
+            backup: backup.clone(),
             task_rx: None,
             fp,
         };
-        if !app.has_backup {
-            app.push_log(
+        match &backup {
+            BackupState::Missing => app.push_log(
                 "当前没有备份，切换后「一键恢复」才会启用".into(),
                 LogKind::Info,
-            );
-        } else {
-            app.push_log("检测到已有备份，一键恢复可用".into(), LogKind::Info);
+            ),
+            BackupState::Ready => {
+                app.push_log("检测到已有备份，一键恢复可用".into(), LogKind::Info)
+            }
+            BackupState::Broken(e) => {
+                app.push_log(format!("⚠ 备份文件无法使用: {}", e), LogKind::Bad)
+            }
         }
         app
+    }
+
+    /// 备份是否可用于还原
+    fn backup_ready(&self) -> bool {
+        matches!(self.backup, BackupState::Ready)
+    }
+
+    fn refresh_backup_state(&mut self) {
+        let st = backup_state();
+        if let BackupState::Broken(e) = &st {
+            // 只在状态变成损坏时提示一次，避免每次刷新都刷屏
+            if !matches!(self.backup, BackupState::Broken(_)) {
+                self.push_log(format!("⚠ 备份文件无法使用: {}", e), LogKind::Bad);
+            }
+        }
+        self.backup = st;
     }
 
     fn push_log(&mut self, msg: String, kind: LogKind) {
@@ -214,7 +241,7 @@ impl App {
                 self.busy = false;
                 self.task_rx = None;
                 self.fp = read_fingerprint();
-                self.has_backup = load_backup().is_ok();
+                self.refresh_backup_state();
             }
             // Empty = 还没结果，下一帧再看
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -379,37 +406,47 @@ impl App {
                     LogKind::Info,
                 ));
             }
-            match &b.browser_lang {
-                Some(l) => {
-                    // 还原同样受浏览器运行限制，否则会被浏览器退出时覆盖
-                    let running = running_browsers();
-                    if running.is_empty() {
-                        let (blog, bfail) = set_browser_language(l);
-                        for line in blog {
-                            let k = if line.starts_with('✗') {
-                                LogKind::Bad
-                            } else {
-                                LogKind::Ok
-                            };
-                            out.push((line, k));
-                        }
-                        fails += bfail;
+            // 浏览器语言还原：同样受"浏览器必须先退出"的限制，否则会被覆盖。
+            // 优先用逐 Profile 精确还原（v2）；旧备份才退回"单值写全部"。
+            let has_per_profile = !b.browser_langs.is_empty();
+            let legacy_single = b.browser_lang.clone();
+            if has_per_profile || legacy_single.is_some() {
+                let running = running_browsers();
+                if running.is_empty() {
+                    let (blog, bfail) = if has_per_profile {
+                        restore_browser_langs(&b.browser_langs)
                     } else {
                         out.push((
-                            format!(
-                                "浏览器正在运行（{}），已跳过浏览器语言还原",
-                                running.join(", ")
-                            ),
+                            "这是旧版备份（只有单个语言值），按旧行为写到所有 Profile".into(),
                             LogKind::Warn,
                         ));
-                        out.push((
-                            "请完全退出浏览器后，再点一次「一键恢复」".into(),
-                            LogKind::Warn,
-                        ));
-                        fails += 1;
+                        set_browser_language(legacy_single.as_deref().unwrap_or_default())
+                    };
+                    for line in blog {
+                        let k = if line.starts_with('✗') {
+                            LogKind::Bad
+                        } else {
+                            LogKind::Ok
+                        };
+                        out.push((line, k));
                     }
+                    fails += bfail;
+                } else {
+                    out.push((
+                        format!(
+                            "浏览器正在运行（{}），已跳过浏览器语言还原",
+                            running.join(", ")
+                        ),
+                        LogKind::Warn,
+                    ));
+                    out.push((
+                        "请完全退出浏览器后，再点一次「一键恢复」".into(),
+                        LogKind::Warn,
+                    ));
+                    fails += 1;
                 }
-                None => out.push(("浏览器语言：备份时未检测到，保持原样".into(), LogKind::Info)),
+            } else {
+                out.push(("浏览器语言：备份时未检测到，保持原样".into(), LogKind::Info));
             }
 
             if fails > 0 {
@@ -939,7 +976,7 @@ fn draw_advice(ui: &mut egui::Ui, app: &mut App, p: Palette) {
 }
 
 fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
-    let enabled = app.has_backup && !app.busy;
+    let enabled = app.backup_ready() && !app.busy;
     let txt_color = if enabled { p.fg } else { p.fg_mute };
     let btn = egui::Button::new(
         egui::RichText::new("↩  一键恢复 · 还原到切换前")
@@ -958,7 +995,18 @@ fn draw_restore(ui: &mut egui::Ui, app: &mut App, p: Palette) {
     let resp = ui.add(btn);
     let clicked = resp.clicked();
     if !enabled {
-        resp.on_hover_text("还没有备份：先切换一次，这里才能还原");
+        // 三态提示：别再对"文件损坏"说"还没有备份：先切换一次"，那会把人带偏
+        let tip = match &app.backup {
+            BackupState::Missing => "还没有备份：先切换一次，这里才能还原".to_string(),
+            BackupState::Broken(e) => format!(
+                "备份文件无法使用：{}\n\
+                 请删除 %LOCALAPPDATA%\\ClaudeFingerprint\\backup.json 后重新切换一次；\n\
+                 若同目录下有 backup.json.<pid>.corrupt，那是留档的旧文件，可手工查看。",
+                e
+            ),
+            BackupState::Ready => "正在处理中…".to_string(),
+        };
+        resp.on_hover_text(tip);
     } else {
         // 备份路径/免责说明收进 hover：需要时才看，不占界面一行
         resp.on_hover_text(
@@ -1012,7 +1060,10 @@ fn draw_others(ui: &mut egui::Ui, app: &mut App, p: Palette) {
             .corner_radius(6.0);
         if ui.add_sized([bw, 28.0], refresh).clicked() {
             app.fp = read_fingerprint();
-            app.push_log("已刷新指纹状态".into(), LogKind::Info);
+            // 一并重算备份状态：否则在另一个终端跑了 CLI 建好备份后，
+            // GUI 的「一键恢复」不会解锁（必须重启或先做一次切换）。
+            app.refresh_backup_state();
+            app.push_log("已刷新指纹与备份状态".into(), LogKind::Info);
         }
 
         let web = egui::Button::new(egui::RichText::new("检测页").color(p.fg_dim).size(11.0))

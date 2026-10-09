@@ -112,6 +112,7 @@ if (Test-Path $readme) {
     # 分发目录里的手册不能引用仓库内的相对路径，否则全是死链。
     # 许可原文就在同目录；评审报告不在 dist 里，改成指向仓库地址。
     $md = $md -replace '\]\(\.\./LICENSE\)', '](LICENSE)'
+    $md = $md -replace '\]\(\.\./THIRD-PARTY-LICENSES\.md\)', '](THIRD-PARTY-LICENSES.md)'
     $md = $md -replace '\[`docs/评审报告\.md`\]\(\.\./docs/评审报告\.md\)',
         '[`docs/评审报告.md`](https://github.com/Tsuki-hash/claude-timezone-guard/blob/main/docs/%E8%AF%84%E5%AE%A1%E6%8A%A5%E5%91%8A.md)'
     Set-Content -Path (Join-Path $outFull 'README.md') -Value $md -Encoding UTF8 -NoNewline
@@ -122,6 +123,17 @@ if (Test-Path $readme) {
 # MIT 要求随分发附带版权声明与许可原文
 $license = Join-Path $root 'LICENSE'
 if (Test-Path $license) { Copy-Item $license (Join-Path $outFull 'LICENSE') }
+
+# 第三方依赖许可：本项目的直接依赖里有 206 个是 Apache-2.0，
+# 而 Apache-2.0 §4 要求二进制分发时随附许可证副本与保留声明。
+# 缺这个文件是真实的合规缺口，不是"可选的加分项"。
+$thirdParty = Join-Path $root 'THIRD-PARTY-LICENSES.md'
+if (Test-Path $thirdParty) {
+    Copy-Item $thirdParty (Join-Path $outFull 'THIRD-PARTY-LICENSES.md')
+} else {
+    Write-Host "⚠ 未找到 THIRD-PARTY-LICENSES.md —— 分发目录将缺少第三方许可声明" -ForegroundColor Yellow
+    Write-Host "  可用 cargo install --locked --features cli cargo-about 重新生成" -ForegroundColor Yellow
+}
 
 # --- 校验和 -----------------------------------------------------------
 $exeOut = Join-Path $outFull 'claude-fingerprint.exe'
