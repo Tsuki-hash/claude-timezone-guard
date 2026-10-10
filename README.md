@@ -1,137 +1,130 @@
-# Claude 环境助手
+<p align="center">
+  <img src=".github/assets/mark.svg" width="72" height="72" alt="Claude Environment Helper" />
+</p>
 
-**Claude Environment Helper** · 地区设置 · 环境检测 · 备份恢复。
+<h1 align="center">Claude Environment Helper</h1>
 
-Windows 桌面工具：管理**系统时区、区域格式与浏览器语言**，检测本机环境，并备份和恢复原设置。
+<p align="center">
+  <strong>Claude 环境助手</strong><br />
+  地区设置、环境检测与备份恢复，一处管理。
+</p>
 
-项目起源于社区对 Claude Code 地区特征检测的分析：据称它会读取系统时区判断用户所在地。
+<p align="center">
+  <a href="https://github.com/Tsuki-hash/claude-env-helper/releases/latest"><img src="https://img.shields.io/github/v/release/Tsuki-hash/claude-env-helper?style=flat-square&amp;label=Release&amp;color=5863D8" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/Windows-x64-0078D4?style=flat-square" alt="Windows x64" />
+  <img src="https://img.shields.io/badge/Built_with-Rust_%2B_egui-606A80?style=flat-square" alt="Built with Rust and egui" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-606A80?style=flat-square" alt="MIT license" /></a>
+</p>
 
-依据分析：<https://ip.net.coffee/claude/timezone.html> ·
-检测信号参考：<https://github.com/LinXiaoTao/FuckClaude>
+<p align="center">
+  <a href="https://github.com/Tsuki-hash/claude-env-helper/releases/latest/download/claude-fingerprint.exe"><strong>下载 Windows 版</strong></a>
+  &nbsp; · &nbsp;
+  <a href="rust/README.md">使用手册</a>
+  &nbsp; · &nbsp;
+  <a href="https://github.com/Tsuki-hash/claude-env-helper/releases">更新记录</a>
+  &nbsp; · &nbsp;
+  <a href="https://github.com/Tsuki-hash/claude-env-helper/issues">反馈问题</a>
+</p>
 
-> 该机制来自社区逆向与爆料，**尚未经 Anthropic 官方证实**。本工具也**不能**让你
-> 变得"安全"：它只改本机特征，不管你的出口 IP。详见下面的「能力边界」。
+<br />
 
-- 技术栈：**Rust + egui**
-- 形态：图形界面 + 命令行，同一个 exe
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/workspace-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/workspace-light.png" />
+    <img src=".github/assets/workspace-light.png" width="100%" alt="Claude 环境助手：地区卡片、时间对照与设置变更预览" />
+  </picture>
+</p>
 
-## 📖 文档
+<p align="center"><sub>先选择地区，核对变更，再应用设置。支持浅色与深色主题。</sub></p>
 
-**完整使用手册见 [rust/README.md](rust/README.md)** —— 安装、命令行、画像表、
-它到底改了哪些注册表、以及「切换完不等于安全」必须自己检查的事项，都在那里。
+## 为本机环境提供清晰的控制
 
-## ⚡ 30 秒上手
+面向使用 Claude Code 的 Windows 用户，集中管理系统时区、区域格式和 Chromium 系浏览器语言。修改前查看预览，修改后保留恢复原设置的入口。
 
-**方式一：下载预编译版**
+| 地区设置 | 环境检测 | 备份恢复 |
+| :--- | :--- | :--- |
+| 六个地区预设，切换前展示时间对照和设置变更。 | 六项本机信号读数，区分可调整设置与需自行处理的事项。 | 原设置加密备份，按浏览器配置分别记录和还原。 |
 
-从 [Releases](https://github.com/Tsuki-hash/claude-env-helper/releases) 下载
-`claude-fingerprint.exe`（本项目按约定不在 Release 附 SHA256 文件，介意校验的话
-下载后自行 `Get-FileHash` 留档）：
+| 独立的网络视角 | 清晰的操作记录 | 图形界面与命令行 |
+| :--- | :--- | :--- |
+| 按需查询第三方出口 IP 估算，提供加载与重试反馈。 | 查看每一步结果，筛选提示和失败项，复制完整记录。 | 日常操作使用桌面界面；脚本可调用同一个程序。 |
+
+## 开始使用
+
+1. [下载 `claude-fingerprint.exe`](https://github.com/Tsuki-hash/claude-env-helper/releases/latest/download/claude-fingerprint.exe)，双击打开。
+2. 选择地区并核对变更预览。新加坡与台北均为 UTC+8，与北京时间无时差。
+3. 完全退出浏览器后点击 **应用设置**，然后重启 Claude Code。需要回退时使用 **恢复原设置**。
+
+Windows 的自动时区设置可能覆盖手动修改；如果设置被改回，请检查「设置 → 时间和语言 → 日期和时间」。详细说明见 [使用手册](rust/README.md)。
+
+<details>
+<summary><strong>命令行用法</strong></summary>
 
 ```powershell
-Get-FileHash .\claude-fingerprint.exe -Algorithm SHA256
+# 读取本机状态
+.\claude-fingerprint.exe status
 
-.\claude-fingerprint.exe status                 # 只看状态，不改任何设置
-.\claude-fingerprint.exe status --remote        # 同上，追加出口 IP 侧的风险估算
-.\claude-fingerprint.exe apply singapore        # 切换到新加坡（UTC+8，时钟零差异）
-.\claude-fingerprint.exe restore                # 还原
+# 追加第三方出口 IP 估算
+.\claude-fingerprint.exe status --remote
+
+# 应用新加坡设置
+.\claude-fingerprint.exe apply singapore
+
+# 恢复备份中的原设置
+.\claude-fingerprint.exe restore
 ```
 
-不带参数运行即启动图形界面；双击 `claude-fingerprint.exe` 效果相同。
+支持 `singapore`、`california`、`taipei`、`tokyo`、`newyork` 和 `shanghai`。不带参数运行打开图形界面。
 
-**方式二：从源码构建**
+</details>
+
+<details>
+<summary><strong>名称与已有版本兼容</strong></summary>
+
+项目现名为 **Claude 环境助手 / Claude Environment Helper**。程序文件和命令保留 `claude-fingerprint.exe`，已有脚本可继续使用。
+
+备份和主题偏好仍位于 `%LOCALAPPDATA%\ClaudeFingerprint\`。截图展示更名后的界面，当前 v1.0.0 发行程序仍保留原显示名称。
+
+</details>
+
+## 了解作用范围
+
+| 本工具可调整 | 仅检测，需自行处理 | 不提供 |
+| :--- | :--- | :--- |
+| 系统时区、区域格式、Chromium 浏览器语言 | 中转地址、NTP 校时配置、字体环境、国产浏览器安装情况 | 代理服务、隐藏 IP、DNS 或 WebRTC 泄露检测 |
+
+> [!IMPORTANT]
+> 修改时区会影响机器上的所有程序。本机评分是规则估算，不代表账号安全或服务可用性；修改本机设置不会改变网络出口。出口 IP 查询会向第三方服务暴露你的出口 IP。
+
+<details>
+<summary><strong>项目背景与参考资料</strong></summary>
+
+项目起源于社区对 Claude Code 地区特征检测的分析。相关时区识别机制尚未经 Anthropic 官方证实，工具也不承诺绕过地区限制。使用时请遵守相关服务条款与所在地法律。
+
+- [时区与中转地址检测分析](https://ip.net.coffee/claude/timezone.html)
+- [检测信号参考：LinXiaoTao/FuckClaude](https://github.com/LinXiaoTao/FuckClaude)（MIT）
+- [完整功能说明、评分权重与手动还原方法](rust/README.md)
+
+</details>
+
+## 从源码构建
+
+需要 Windows x64 与 Rust MSVC 工具链。
 
 ```powershell
 cd rust
-cargo build --release
-
-# 体检（只读）
-.\target\release\claude-fingerprint.exe status
-
-# 切换到新加坡（UTC+8，时钟与北京时间零差异）
-.\target\release\claude-fingerprint.exe apply singapore
-
-# 还原
-.\target\release\claude-fingerprint.exe restore
+cargo build --release --locked
 ```
 
-## 🗂️ 目录结构
+程序生成于 `rust/target/release/claude-fingerprint.exe`。[构建与打包说明](rust/README.md#-从源码构建)包含测试、打包及签名流程。
 
-```
-rust/            源码（唯一在维护的实现）
-  src/core.rs      时区 / 区域语言 / 字体与浏览器检测 / 注册表 / 风险评分
-  src/browser.rs   浏览器 Preferences 读写 + 备份还原
-  src/remote.rs    出口侧风险估算（FuckClaude /api/check 客户端）
-  src/ui.rs        应用状态、后台任务与主题
-  src/ui/workbench.rs  工作台界面与交互
-  src/ui/preview.rs    可选的开发截图入口
-  src/main.rs      命令行入口与程序启动
-  README.md        使用手册（完整版）
-  package.ps1      打包成可分发目录
-  setup-signing.ps1 本机代码签名证书创建（SmartScreen 治理）
-docs/            开发计划（plans/）与评审报告（reviews/，按日期归档）
-dist/            本地打包输出（不入库；发布产物见 Releases）
-```
+## 反馈与贡献
 
-## 🔍 检测原理
+欢迎通过 [Issues](https://github.com/Tsuki-hash/claude-env-helper/issues) 提交问题或功能建议。报告问题时请附上 Windows 版本、程序版本和复现步骤，并隐藏截图或日志中的密钥与个人信息。
 
-社区逆向分析指出：Claude Code 经 `ANTHROPIC_BASE_URL` 走中转时，会读取**系统时区**
-与**中转 hostname**，并把结果**隐写**进 system prompt 的 `Today's date is …` 一行——
+代码变更请使用英文 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) 信息，例如 `feat: add region preset` 或 `fix: handle missing browser profiles`。
 
-- 命中中国时区时，日期分隔符 `-` 变成 `/`；
-- 撇号在 4 种视觉几乎相同的 Unicode 变体间切换，编码「域名清单 / AI 实验室关键词」是否命中。
+## 许可证
 
-也就是说，防住的关键是**时区名字符串本身**与**中转域名**，而不是 UTC 偏移量——这正是
-本工具切「新加坡 / 台北（同为 UTC+8，时钟零差异）」也能规避的原理。
-
-### 本工具的风险评分（6 项，合计 100）
-
-| 风险项 | 权重 | 可修性 |
-| --- | --- | --- |
-| 中转地址（`ANTHROPIC_BASE_URL`） | 32 | 检测但不代改：改环境变量/配置文件即可归零 |
-| 系统时区 | 30 | ✅ 本工具可修（大陆时区满分；港澳 60%；Taipei 等不计分） |
-| 字体环境残留 | 18 | 检测但不可修：国产厂商字体 / 非标配中文字体的存在性（按特征名单计） |
-| 区域格式 | 10 | ✅ 本工具可修（zh-Hans 1.0 / 港澳繁体 0.5 / zh-TW 0） |
-| NTP 校时服务器 | 5 | 检测但不可修：国内校时服务器会暴露真实时区 |
-| 国产浏览器已装 | 5 | 半可修：卸载或避免日常使用（工具不代劳） |
-
-时区分级的依据：社区验证 Claude 只读取 `Asia/Shanghai` / `Asia/Urumqi`；
-**`Asia/Taipei` 不在判定范围**（台湾是 Anthropic 完全支持的地区）；港澳属受限地区记部分分。
-
-### 出口侧估算
-
-`status --remote`（或界面「查询出口 IP」）会调用
-[FuckClaude](https://github.com/LinXiaoTao/FuckClaude) 的公开 `/api/check` 接口，
-基于你的**出口 IP 与请求头**给出服务端估算。它与本机读数**口径不同、互为补充**：
-本机分看「设备像不像中国用户」，出口侧看「IP 像不像中国用户」。
-
-延伸阅读（环境纯化、注册支付避坑、申诉 SOP 等指南，含官方规则来源）：
-<https://fuck-claude.vercel.app/zh/guides/> —— 情报与名单参考自
-[LinXiaoTao/FuckClaude](https://github.com/LinXiaoTao/FuckClaude)（MIT）。
-
-## ⚠️ 先看能力边界
-
-**本工具能改**：系统时区、区域格式、Chromium 系浏览器的语言设置。
-
-**能检测但不代改**：中转地址（`ANTHROPIC_BASE_URL`，改配置即可归零）、
-NTP 校时服务器、字体环境残留、已安装的国产浏览器。
-
-**完全不管**：网络出口 —— 不做代理、不隐藏 IP、不检测 DNS / WebRTC 泄露；
-出口 IP 侧的风险请用 `status --remote` 或
-<https://fuck-claude.vercel.app/zh/> 复测。
-
-所以：**改完不等于安全**，仍可能被识别。
-
-## ⚖️ 免责声明
-
-- 本工具会修改**系统级时区设置**，机器上所有程序都会受影响。请自行确认你理解这个改动，
-  并保留好还原手段（本工具自带 `restore`；备份丢失时见手册的「卸载与手动还原」一节）。
-- 它只改本机特征，不改变网络出口。**这可能违反相关服务的使用条款，也可能被目标服务识别出来**，
-  后果由使用者自行承担；请遵守所在地法律与相关服务条款。
-- 本文档引用的「Claude Code 读取系统时区」机制来自**社区逆向分析与爆料**，
-  截至撰写时**尚未经 Anthropic 官方证实**，仅供参考。
-- 软件按 MIT 许可证以"现状"提供，不附带任何担保。
-
-## 📄 许可证
-
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 [Tsuki-hash](https://github.com/Tsuki-hash)。第三方组件的许可证与声明见 [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)。
