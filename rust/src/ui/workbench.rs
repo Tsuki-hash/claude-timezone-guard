@@ -164,7 +164,7 @@ pub(super) fn draw_shell(ctx: &egui::Context, app: &mut App, p: Palette) {
                 icon(ui.painter(), r.center(), Icon::Globe, p.accent_ink);
                 ui.vertical(|ui| {
                     ui.label(text("Claude", 19.0, p.fg).strong());
-                    ui.label(text("环境工作台", 11.0, p.fg_dim));
+                    ui.label(text("环境助手", 11.0, p.fg_dim));
                 });
             });
             ui.add_space(35.0);

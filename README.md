@@ -1,8 +1,10 @@
-# Claude 指纹切换器
+# Claude 环境助手
 
-Windows 桌面小工具：一键切换**系统时区**（附区域格式、浏览器语言），用来减少本机
-暴露给 Claude Code 的「中国大陆」特征 —— 依据社区爆料，它疑似读取**系统时区**
-（而非 IP）来判断用户所在地。
+**Claude Environment Helper** · 地区设置 · 环境检测 · 备份恢复。
+
+Windows 桌面工具：管理**系统时区、区域格式与浏览器语言**，检测本机环境，并备份和恢复原设置。
+
+项目起源于社区对 Claude Code 地区特征检测的分析：据称它会读取系统时区判断用户所在地。
 
 依据分析：<https://ip.net.coffee/claude/timezone.html> ·
 检测信号参考：<https://github.com/LinXiaoTao/FuckClaude>
@@ -22,7 +24,7 @@ Windows 桌面小工具：一键切换**系统时区**（附区域格式、浏�
 
 **方式一：下载预编译版**
 
-从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases) 下载
+从 [Releases](https://github.com/Tsuki-hash/claude-env-helper/releases) 下载
 `claude-fingerprint.exe`（本项目按约定不在 Release 附 SHA256 文件，介意校验的话
 下载后自行 `Get-FileHash` 留档）：
 

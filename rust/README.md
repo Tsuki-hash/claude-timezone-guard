@@ -1,4 +1,4 @@
-# Claude 指纹切换器 · 使用手册
+# Claude 环境助手 · 使用手册
 
 > 依据 https://ip.net.coffee/claude/timezone.html 的分析：Claude Code 疑似读取**系统时区**判断用户所在地，`Asia/Shanghai` / `Asia/Urumqi` 是被点名的高风险特征。
 >
@@ -27,26 +27,28 @@
 
 ## ✨ 它是什么
 
-一个 Rust + egui 的 Windows 桌面小工具，**一键切换系统时区**，附带区域格式和浏览器语言。
+Claude Environment Helper 是一个 Rust + egui 的 Windows 桌面工具，提供**地区设置、环境检测与备份恢复**，支持切换系统时区、区域格式和浏览器语言。
 
 | 形态 | 说明 |
 |---|---|
 | `claude-fingerprint.exe` | 带图形界面 + 命令行，同一个文件 |
-| `启动指纹切换器.bat` | 双击启动图形界面，不用记命令 |
+| `启动环境助手.bat` | 双击启动图形界面，不用记命令 |
+
+**兼容说明**：程序文件和命令仍为 `claude-fingerprint.exe`，备份和主题偏好继续使用 `%LOCALAPPDATA%\ClaudeFingerprint\`。本地打包保留旧的 `启动指纹切换器.bat` 作为兼容启动器。
 
 **界面流程**：选择地区 → 查看时区、区域格式与浏览器语言预览 → 点击「应用设置」。新加坡和美国加州提供快捷选择，恢复备份为独立操作。
 
 ```powershell
 # 启动图形界面
 .\claude-fingerprint.exe
-# 或者直接双击 启动指纹切换器.bat
+# 或者直接双击 启动环境助手.bat
 ```
 
 **核心思路（原文推荐方案二）**：时区换成同为 **UTC+8** 的新加坡或台北 —— 时钟显示的时间和北京时间**分毫不差**，日程闹钟完全不受影响，但系统时区名不再是 `Asia/Shanghai`。
 
 ## 🚀 快速开始
 
-> **获取程序**：从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases)
+> **获取程序**：从 [Releases](https://github.com/Tsuki-hash/claude-env-helper/releases)
 > 下载预编译的 `claude-fingerprint.exe`，或[从源码构建](#-从源码构建)。
 > 下载后建议先用 `Get-FileHash` 核对 Release 里给出的 SHA256。
 > 下面的 `.\claude-fingerprint.exe` 即该产物。
@@ -207,7 +209,7 @@ cargo build --release     # 产物: rust\target\release\claude-fingerprint.exe
 写入 SHA256SUMS → 自检有无本机路径残留。**测试不通过或产物落后于源码时会拒绝打包。**
 
 > **为什么不把 exe 提交进仓库**：二进制无法审计，而这是个要读你注册表和浏览器配置的程序。
-> 请从 [Releases](https://github.com/Tsuki-hash/claude-timezone-guard/releases) 下载并核对
+> 请从 [Releases](https://github.com/Tsuki-hash/claude-env-helper/releases) 下载并核对
 > 那里给出的 SHA256，或自行从源码构建。
 
 ## 🧪 已知局限

@@ -1,7 +1,7 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-  打包 Claude 指纹切换器为可分发目录
+  打包 Claude 环境助手为可分发目录
 .DESCRIPTION
   先跑测试、再编译、校验产物比源码新、然后复制到 dist，最后生成 SHA256SUMS.txt。
 
@@ -134,6 +134,8 @@ chcp 65001 >nul
 cd /d "%~dp0"
 start "" "%~dp0claude-fingerprint.exe"
 '@
+Set-Content -Path (Join-Path $outFull '启动环境助手.bat') -Value $bat -Encoding utf8
+# 兼容已使用旧启动器名称的用户。
 Set-Content -Path (Join-Path $outFull '启动指纹切换器.bat') -Value $bat -Encoding utf8
 
 # 说明：只认 rust\README.md。复制时把指向仓库根的相对链接改写成 dist 内的实际文件，

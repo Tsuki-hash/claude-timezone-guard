@@ -1,4 +1,4 @@
-//! Claude 指纹切换器 · Rust + egui
+//! Claude 环境助手 · Rust + egui
 //!
 //! 模块划分：
 //!   core.rs    —— 时区 / 区域语言 / 注册表 / 进程探测
@@ -202,7 +202,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native(
-        "Claude 指纹切换器",
+        ui::APP_NAME,
         options,
         Box::new(|cc| {
             setup_fonts(&cc.egui_ctx);
@@ -212,7 +212,7 @@ fn main() -> Result<(), eframe::Error> {
 }
 
 fn cli_usage() {
-    eprintln!("Claude 指纹切换器 {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("{} {}", ui::APP_NAME, env!("CARGO_PKG_VERSION"));
     eprintln!();
     eprintln!("用法:");
     eprintln!("  claude-fingerprint status              查看当前指纹与风险分");

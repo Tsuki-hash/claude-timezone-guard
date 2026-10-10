@@ -2,9 +2,9 @@
 name = "claude-fingerprint"
 version = "1.0.0"
 edition = "2021"
-description = "Claude 指纹切换器 - 一键切换系统时区 / 区域语言 / 浏览器语言"
+description = "Claude Environment Helper · 地区设置、环境检测与备份恢复"
 license = "MIT"
-repository = "https://github.com/Tsuki-hash/claude-timezone-guard"
+repository = "https://github.com/Tsuki-hash/claude-env-helper"
 readme = "README.md"
 
 [features]

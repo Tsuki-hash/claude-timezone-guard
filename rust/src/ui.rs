@@ -15,6 +15,7 @@ use std::thread;
 #[cfg(feature = "ui-preview")]
 mod preview;
 mod workbench;
+pub const APP_NAME: &str = "Claude 环境助手";
 pub const WINDOW_SIZE: [f32; 2] = [1120.0, 840.0];
 pub const MIN_WINDOW_SIZE: [f32; 2] = [760.0, 660.0];
 
@@ -716,7 +717,7 @@ fn apply_round_corners() {
     }
 
     // 与 main.rs 里 run_native 的窗口名一致
-    let title: Vec<u16> = OsStr::new("Claude 指纹切换器")
+    let title: Vec<u16> = OsStr::new(APP_NAME)
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
@@ -768,11 +769,7 @@ fn draw_titlebar(ctx: &egui::Context, app: &mut App, p: Palette) {
 
                 // 左：应用名，低声处理（12px、次级灰、不加图标不加粗）——
                 // 「静仪」哲学：标题栏不许抢数据的戏，绿色方块装饰已移除
-                ui.label(
-                    egui::RichText::new("Claude 指纹切换器")
-                        .size(11.5)
-                        .color(p.fg_dim),
-                );
+                ui.label(egui::RichText::new(APP_NAME).size(11.5).color(p.fg_dim));
                 ui.label(
                     egui::RichText::new(env!("CARGO_PKG_VERSION"))
                         .size(11.0)
