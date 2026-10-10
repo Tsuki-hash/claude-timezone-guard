@@ -16,7 +16,8 @@
     * 说明文件只取 rust\README.md（Rust 版手册），不回退到仓库根目录的 README。
 #>
 param(
-    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist')
+    [string]$OutDir = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'),
+    [string]$TargetDir = (Join-Path $PSScriptRoot 'target')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +25,9 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path $PSScriptRoot -Parent
 $rust = $PSScriptRoot
-$exe = Join-Path $rust 'target\release\claude-fingerprint.exe'
+# 可指定独立构建目录，避免覆盖用户当前正在运行的程序。
+$targetFull = [System.IO.Path]::GetFullPath($TargetDir)
+$exe = Join-Path $targetFull 'release\claude-fingerprint.exe'
 
 # --- 安全护栏：$OutDir 可被调用者传入，而下面会递归删除它 -------------
 # 要求解析后的绝对路径位于仓库内，避免误删任意目录。
@@ -41,7 +44,7 @@ if (-not $outFull.StartsWith($rootFull + '\', [StringComparison]::OrdinalIgnoreC
 Write-Host "→ 运行单元测试…" -ForegroundColor Cyan
 Push-Location $rust
 try {
-    & cargo test --release --quiet
+    & cargo test --release --quiet --locked --target-dir $targetFull
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ 单元测试未通过，已中止打包" -ForegroundColor Red
         exit 1
@@ -65,7 +68,7 @@ try {
         }
     }
     $env:RUSTFLAGS = $remaps -join ' '
-    & cargo build --release --locked
+    & cargo build --release --locked --target-dir $targetFull
     if ($LASTEXITCODE -ne 0) {
         Write-Host "✗ 编译失败，已中止打包" -ForegroundColor Red
         exit 1
