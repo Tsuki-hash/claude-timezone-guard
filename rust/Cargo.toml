@@ -7,7 +7,12 @@ license = "MIT"
 repository = "https://github.com/Tsuki-hash/claude-timezone-guard"
 readme = "README.md"
 
+[features]
+# 开发截图：仅显式启用时读取预览参数，不写用户偏好。
+ui-preview = ["dep:image"]
+
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts"] }
 winreg = "0.52"

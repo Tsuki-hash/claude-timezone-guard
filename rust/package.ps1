@@ -9,7 +9,7 @@
     * 脚本自己执行 cargo build，而不是"捡一个已有的 exe 就复制" ——
       否则很容易把旧二进制（甚至 CLI 不可用的版本）连同"看起来正常"的
       校验和一起发出去，而校验和无法反映源码状态。
-    * 校验 exe 的修改时间不早于任何 src/*.rs，杜绝发布落后于源码的产物。
+    * 校验 exe 的修改时间不早于 src 下任何 Rust 源文件，杜绝发布落后于源码的产物。
     * 用 --remap-path-prefix 抹掉构建机上的绝对路径：Cargo 会把 registry 与
       build 脚本的路径写进 panic/diagnostic 字符串，`strip = true` 清不掉，
       发布二进制里会残留开发者的 Windows 用户名与目录结构。
@@ -111,7 +111,7 @@ if ($signCert) {
 
 # --- 新鲜度校验：产物不得落后于源码 -----------------------------------
 $exeTime = (Get-Item $exe).LastWriteTimeUtc
-$newer = Get-ChildItem (Join-Path $rust 'src') -Filter *.rs -File |
+$newer = Get-ChildItem (Join-Path $rust 'src') -Filter *.rs -File -Recurse |
     Where-Object { $_.LastWriteTimeUtc -gt $exeTime }
 if ($newer) {
     Write-Host "✗ 产物比源码旧，拒绝打包（下面这些源文件比 exe 新）：" -ForegroundColor Red

@@ -90,6 +90,28 @@ fn setup_fonts(ctx: &egui::Context) {
             break;
         }
     }
+    if let Ok(data) = std::fs::read(r"C:\Windows\Fonts\segoeui.ttf") {
+        fonts
+            .font_data
+            .insert("segoe".into(), egui::FontData::from_owned(data).into());
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "segoe".into());
+        loaded = true;
+    }
+    if let Ok(data) = std::fs::read(r"C:\Windows\Fonts\consola.ttf") {
+        fonts
+            .font_data
+            .insert("consolas".into(), egui::FontData::from_owned(data).into());
+        fonts
+            .families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .insert(0, "consolas".into());
+        loaded = true;
+    }
     if loaded {
         ctx.set_fonts(fonts);
     }
@@ -158,11 +180,16 @@ fn main() -> Result<(), eframe::Error> {
     // 隐藏控制台窗口（仅当它是本进程独占时，否则会连带隐藏用户的终端）
     hide_console_window_if_exclusive();
 
+    #[allow(unused_mut)]
+    let mut window_size = ui::WINDOW_SIZE;
+    #[cfg(feature = "ui-preview")]
+    if std::env::var("FP_PREVIEW_NARROW").as_deref() == Ok("1") {
+        window_size = ui::MIN_WINDOW_SIZE;
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            // 高度按主页内容定（见 ui.rs 布局回归测试量出的内容底边）：
-            // 主页一屏放下（零滚动），内容收进二级详情页。
-            .with_inner_size(ui::WINDOW_SIZE)
+            // 默认宽屏工作台；较窄窗口自动堆叠预览并支持滚动。
+            .with_inner_size(window_size)
             .with_min_inner_size(ui::MIN_WINDOW_SIZE)
             // 自绘标题栏（含最小化/最大化/关闭），窗口控制与界面融为同一行。
             // 早先保留原生标题栏，是因为当时的拖拽区实现会抢按钮的点击；

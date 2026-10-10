@@ -60,7 +60,9 @@ rust/            源码（唯一在维护的实现）
   src/core.rs      时区 / 区域语言 / 字体与浏览器检测 / 注册表 / 风险评分
   src/browser.rs   浏览器 Preferences 读写 + 备份还原
   src/remote.rs    出口侧风险估算（FuckClaude /api/check 客户端）
-  src/ui.rs        egui 界面与主题
+  src/ui.rs        应用状态、后台任务与主题
+  src/ui/workbench.rs  工作台界面与交互
+  src/ui/preview.rs    可选的开发截图入口
   src/main.rs      命令行入口与程序启动
   README.md        使用手册（完整版）
   package.ps1      打包成可分发目录
@@ -96,7 +98,7 @@ dist/            本地打包输出（不入库；发布产物见 Releases）
 
 ### 出口侧估算
 
-`status --remote`（或界面「出口侧 ›」）会调用
+`status --remote`（或界面「查询出口 IP」）会调用
 [FuckClaude](https://github.com/LinXiaoTao/FuckClaude) 的公开 `/api/check` 接口，
 基于你的**出口 IP 与请求头**给出服务端估算。它与本机读数**口径不同、互为补充**：
 本机分看「设备像不像中国用户」，出口侧看「IP 像不像中国用户」。
